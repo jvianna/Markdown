@@ -10,9 +10,7 @@ import qualified Data.Text.IO as T
 import qualified Data.Text as T
 
 convert :: [String] -> Text -> IO ()
-convert opts t = case parseMarkdown t of
-                       Left e   -> error (show e)
-                       Right r  -> render r
+convert opts = render . parseMarkdown
     where render = if "-n" `elem` opts
                       then print
                       else BL.putStr . renderHtml . renderBlocks

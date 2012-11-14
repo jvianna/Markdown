@@ -4,13 +4,14 @@
 
 TODO
 
-_ explore a line-based approach?
-  maybe don't need parser combinators, except for the scanners?
+* optimizations
+* comment
 
 QUESTIONS
 
 * nested quotes in link title?  seems silly, but some impls do?
 * limit html blocks to list of html block tags?
+* how exactly do html blocks work?
 * markdown=1 attribute?
 * allow blank lines not to separate two code blocks?
    Markdown.pl fuses them. is this desirable?
@@ -28,32 +29,30 @@ QUESTIONS
 * two blank lines end a list?
    YES
 * two blockquotes w blank line between
-   YES
+   NO - but two blank lines separate blockquotes, just like lists
 * store entities as chars or entities?
    CURRENTLY AS ENTITIES
-* how exactly do html blocks work?
-* char encoding?
-* tab handling?
 * should we retain user line breaks?
 
 -}
 
-module Markdown (parseMarkdown, renderBlocks) where
+module Markdown {-(parseMarkdown, renderBlocks)-} where
+import Prelude hiding (takeWhile)
 import qualified Data.Map as M
-import Data.List (intercalate)
-import Data.Char (isAscii, isSpace, isPunctuation, isSymbol)
-import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
+import Control.Monad.State
+import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
+                    isDigit, isHexDigit, isAlphaNum, isLetter)
+import Network.URI (parseURI, isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
-import Control.Monad
-import Control.Applicative hiding ((<|>),many,optional,empty)
-import Text.Parsec hiding (sepBy1)
-import Text.Parsec.Text
+import Control.Applicative hiding (optional,empty)
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 
 import qualified Data.Text as T
 import Data.Text ( Text )
+import Data.Attoparsec.Text
 
 -- for HTML rendering
 import qualified Text.Blaze.XHtml5 as H
@@ -63,14 +62,8 @@ import Text.Blaze.Html hiding(contents)
 
 -- for debugging
 -- import Debug.Trace
+-- tr s = trace s (return ())
 
--- Replacement for Parsec's 'sepBy1', which does not have the @try@
--- and so does not behave as I want it to.
-sepBy1 :: Parsec s u a -> Parsec s u b -> Parsec s u [a]
-sepBy1 p sep = do
-  first <- p
-  rest <- many $ try $ sep >> p
-  return (first:rest)
 
 -- Structured representation of a document.
 
@@ -85,7 +78,6 @@ data Block = Para Inlines
            | CodeBlock CodeAttr Text
            | HtmlBlock Text
            deriving Show
--- TODO raw html
 
 type Blocks = Seq Block
 
@@ -111,180 +103,322 @@ data NumWrapper = PeriodFollowing | ParenFollowing | ParensAround
 
 data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
 
+listMarkerWidth :: ListType -> Int
+listMarkerWidth (Bullet _) = 1
+listMarkerWidth (Numbered wrap n) =
+  (if wrap == ParensAround then 2 else 1) +
+  case n of
+       _ | n < 10    -> 1
+         | n < 100   -> 2
+         | n < 1000  -> 3
+         | n < 10000 -> 4
+         | otherwise -> 5
+
 -- Defining the parser.
 
 type ReferenceMap = M.Map Text (Text, Text)
 
-addLinkReference :: Text -> (Text, Text) -> P ()
-addLinkReference key (url,tit) = updateState $ \st ->
-  st{ linkReferences = M.insert (T.toUpper key) (url,tit) (linkReferences st) }
+addLinkReference :: Text -> (Text, Text) -> BlockParser ()
+addLinkReference key (url,tit) = modify $ \st ->
+  st{ references = M.insert (T.toUpper key) (url,tit) (references st) }
 
-lookupLinkReference :: Text -> P (Maybe (Text, Text))
-lookupLinkReference key = do
-  refmap <- linkReferences <$> getState
-  return $ M.lookup (T.toUpper key) refmap
+lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
+lookupLinkReference refmap key = M.lookup (T.toUpper key) refmap
 
-data ParserState = ParserState{
-         beginLineScanners  :: [P ()]
-       , beginBlockScanners :: [P ()]
-       , linkReferences     :: ReferenceMap
-       }
+type Scanner = Parser ()
 
-startingState :: ParserState
-startingState = ParserState{
-         beginLineScanners = []
-       , beginBlockScanners = []
-       , linkReferences = M.empty
-       }
+-- Try to match the scanner, returning Just the remaining text if
+-- it matches, Nothing otherwise.
+applyScanners :: [Scanner] -> Text -> Maybe Text
+applyScanners scanners t =
+  case parseOnly (sequence_ scanners >> takeText) t of
+       Right t'   -> Just t'
+       Left _err  -> Nothing
 
-type P = GenParser ParserState
+-- Scanners
 
-parseBlocks :: Text -> Either ParseError (Blocks, ReferenceMap)
-parseBlocks = runP withRefs startingState "input"
-  where withRefs = do x <- pDoc
-                      y <- linkReferences <$> getState
-                      return (x,y)
+scanBlockquoteStart :: Scanner
+scanBlockquoteStart =
+  scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
--- Functions to maintain two stacks of scanners:
---
--- * The "begin line scanners" are run at the beginning
---   of a line that continues an existing block.
--- * The "begin block scanners" are run at the beginning
---   of a new block.
+scanIndentSpace :: Scanner
+scanIndentSpace = scanSpace >> scanSpace >> scanSpace >> scanSpace
 
-withBeginLineScanner :: P () -> P a -> P a
-withBeginLineScanner scanner p = try $ do
-  updateState $ \st -> st{ beginLineScanners =
-                           beginLineScanners st ++ [scanner] }
-  result <- p
-  updateState $ \st -> st{ beginLineScanners =
-        case reverse (beginLineScanners st) of
-                 (_:xs) -> reverse xs
-                 []     -> [] }
-  return result
+scanNonindentSpaces :: Scanner
+scanNonindentSpaces =
+  (scanChar ' ' >>
+    (scanChar ' ' >>
+      (scanChar ' ' <|> return ())
+    ) <|> return ()
+  ) <|> return ()
 
-withBeginBlockScanner :: P () -> P a -> P a
-withBeginBlockScanner scanner p = try $ do
-  updateState $ \st -> st{ beginBlockScanners =
-                           beginBlockScanners st ++ [scanner] }
-  result <- p
-  updateState $ \st -> st{ beginBlockScanners =
-        case reverse (beginBlockScanners st) of
-                 (_:xs) -> reverse xs
-                 []     -> [] }
-  return result
+scanChar :: Char -> Scanner
+scanChar c = char c >> return ()
 
--- When we begin parsing a block container, such as a blockquote
--- or list item, we push new scanners onto the begin line and
--- begin block stacks.  We then parse blocks until we can't
--- parse any more.  At that point we pop the scanners we added
--- and return the result.
---
--- Note: the scanners are applied in the order they were added
--- to the stack.  We apply the first one that was added, then
--- the second, etc.
---
--- After a newline, we try the begin line parsers.  If they succeed,
--- the next line is considered part of the current block.
--- Otherwise, we consider the block closed and try to parse
--- another block.
+scanBlankline :: Scanner
+scanBlankline = skipWhile (==' ') *> endOfInput
 
--- | Parse one or more blocks with new begin line and begin block
--- scanners.
-pBlocks :: P () -> P () -> P Blocks
-pBlocks beginLineScanner beginBlockScanner =
-  withBeginLineScanner beginLineScanner $
-    withBeginBlockScanner beginBlockScanner $
-      msum <$> (pBlock `sepBy1` pBlockSep)
+scanSpace :: Scanner
+scanSpace = () <$ satisfy (==' ')
 
--- | Parse optional blanklines separating blocks, plus whatever
--- the begin block scanners require at the beginning of a new block.
-pBlockSep :: P Int
-pBlockSep = try $ do
-  num <- length <$> many (try $ pBeginBlock >> pBlankline)
-  pBeginBlock
-  return num
+-- 0 or more spaces
+scanSpaces :: Scanner
+scanSpaces = skipWhile (==' ')
 
--- | Parses line beginning for new block.
-pBeginBlock :: P ()
-pBeginBlock = try $ getState >>= sequence_ . beginBlockScanners
+scanSpnl :: Scanner
+scanSpnl = scanSpaces *> opt (endOfLine *> scanSpaces)
 
-pBeginLine :: P ()
-pBeginLine = try $ getState >>= sequence_ . beginLineScanners
+-- optional
+opt :: Scanner -> Scanner
+opt s = option () (s >> return ())
 
--- Utility parsers.
+-- not followed by
+nfb :: Parser a -> Scanner
+nfb s = do
+  succeeded <- option False (True <$ s)
+  if succeeded
+     then mzero
+     else return ()
 
--- | Applies a parser and returns the raw text that was parsed,
--- along with the value produced by the parser.
-withRaw :: P a -> P (a, Text)
-withRaw parser = do
-  pos1 <- getPosition
-  inp <- getInput
-  result <- parser
-  pos2 <- getPosition
-  let (l1,c1) = (sourceLine pos1, sourceColumn pos1)
-  let (l2,c2) = (sourceLine pos2, sourceColumn pos2)
-  let inplines = take ((l2 - l1) + 1) $ T.lines inp
-  let raw = case inplines of
-                []   -> error "raw: inplines is null" -- shouldn't happen
-                [l]  -> T.take (c2 - c1) l
-                ls   -> T.unlines (init ls) <> T.take (c2 - 1) (last ls)
-  return (result, raw)
+parseAtxHeaderStart :: Parser Int
+parseAtxHeaderStart = do
+  hashes <- takeWhile1 (=='#')
+  scanSpace
+  return $ T.length hashes
 
-pEscapedChar :: P Char
-pEscapedChar = try $ char '\\' *> satisfy isEscapable
+scanAtxHeaderStart :: Scanner
+scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
-isEscapable :: Char -> Bool
-isEscapable c = isSymbol c || isPunctuation c
+scanHRuleLine :: Scanner
+scanHRuleLine = try $ do
+  scanNonindentSpaces
+  c <- satisfy (\c -> c == '*' || c == '-' || c == '_')
+  count 2 $ try $ scanSpaces >> char c
+  skipWhile (\x -> x == ' ' || x == c)
+  endOfInput
+  return ()
 
--- parses a character satisfying the predicate, but understands escaped
--- symbols
-pSatisfy :: (Char -> Bool) -> P Char
-pSatisfy p =
-  satisfy (\c -> c /= '\\' && p c)
-   <|> try (char '\\' *> satisfy (\c -> isEscapable c && p c))
+isCodeFenceChar :: Char -> Bool
+isCodeFenceChar '`' = True
+isCodeFenceChar '~' = True
+isCodeFenceChar _   = False
 
-pAnyChar :: P Char
-pAnyChar = pSatisfy (const True)
+scanCodeFenceLine :: Scanner
+scanCodeFenceLine = () <$ codeFenceParserLine
 
-pNonspaceChar :: P Char
-pNonspaceChar = pSatisfy (`notElem` " \t\r\n")
-
-pBlankline :: P ()
-pBlankline = try $ skipMany pSpaceChar <* newline
-
-pBlockquoteStart :: P ()
-pBlockquoteStart = try $ pNonindentSpaces *> char '>' *> optional (char ' ')
-
-pIndentSpace :: P ()
-pIndentSpace = try (() <$ count 4 (char ' '))
-  <|> try (pNonindentSpaces >> char '\t' >> return ())
-
-pNonindentSpaces :: P String
-pNonindentSpaces = do
-  option "" $ do
-    char ' '
-    option " " $ do
-      char ' '
-      option "  " $ do
-        char ' '
-        return "   "
-
-pSpaceChar :: P Char
-pSpaceChar = oneOf " \t"
-
-pLine :: P Text
-pLine = T.pack <$> (  manyTill (satisfy (/='\n')) newline
-                  <|> many1 anyChar  -- for last line w/o newline
-                   )
-
-pCodeFenceLine :: P (String, CodeAttr)
-pCodeFenceLine = try $ do
-  c <- oneOf "`~"
+codeFenceParserLine :: Parser (Text, Text)
+codeFenceParserLine = try $ do
+  c <- satisfy isCodeFenceChar
   count 2 (char c)
-  extra <- many (char '`')
-  attr <- parseCodeAttributes <$> pLine
-  return (c:c:c:extra, attr)
+  extra <- takeWhile (== c)
+  scanSpaces
+  rawattr <- takeWhile (/='`')
+  endOfInput
+  return (T.pack [c,c,c] <> extra, rawattr)
+
+scanHtmlBlockStart :: Scanner
+scanHtmlBlockStart = pHtmlTag >>= guard . f . fst
+  where f (Opening name) = name `Set.member` blockHtmlTags
+        f (SelfClosing name) = name `Set.member` blockHtmlTags
+        f _ = False
+
+isBulletChar :: Char -> Bool
+isBulletChar '-' = True
+isBulletChar '+' = True
+isBulletChar '*' = True
+isBulletChar _   = False
+
+scanListStart :: Maybe ListType -> Parser ()
+scanListStart Nothing = () <$ parseListMarker
+scanListStart (Just (Bullet   c)) = try $ do
+  marker <- parseBullet
+  case marker of
+        Bullet c' | c == c' -> return ()
+        _                   -> fail "Change in list style"
+scanListStart (Just (Numbered w _)) = try $ do
+  marker <- parseListNumber
+  case marker of
+        Numbered w' _ | w == w' -> return ()
+        _                       -> fail "Change in list style"
+
+parseListMarker :: Parser ListType
+parseListMarker = parseBullet <|> parseListNumber
+
+parseBullet :: Parser ListType
+parseBullet = do
+  c <- satisfy isBulletChar
+  scanSpace <|> scanBlankline
+  nfb $ count 2 $ try $ scanSpaces >> char c -- hrule
+  return $ Bullet c
+
+parseListNumber :: Parser ListType
+parseListNumber =
+  (parseListNumberDig <|> parseListNumberPar) <*
+     ((scanSpace <* scanSpaces) <|> scanBlankline)
+  where parseListNumberDig = try $ do
+           num <- decimal
+           wrap <-  PeriodFollowing <$ char '.'
+                <|> ParenFollowing <$ char ')'
+           return $ Numbered wrap num
+        parseListNumberPar = try $ do
+           char '('
+           num <- decimal
+           char ')'
+           return $ Numbered ParensAround num
+
+-- note: this requires reference labels to be on one line.
+scanReference :: Scanner
+scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
+  (scanSpace <|> endOfLine)
+
+---
+
+
+data BlockParserState = BlockParserState{
+          inputLines    :: [Text]
+        , lastLine      :: Maybe Text
+        , references    :: ReferenceMap
+        , lineScanners  :: [Scanner]
+        , blockScanners :: [Scanner]
+        }
+
+type BlockParser = State BlockParserState
+
+-- Add a scanner to the line scanner stack and run a parser,
+-- then pop the scanner.
+withLineScanner :: Scanner -> BlockParser a -> BlockParser a
+withLineScanner scanner parser = do
+  scanners <- gets lineScanners
+  modify $ \st -> st{ lineScanners = scanners ++ [scanner] }
+  result <- parser
+  modify $ \st -> st{ lineScanners = scanners }
+  return result
+
+-- Add a scanner to the block scanner stack and run a parser,
+-- then pop the scanner.
+withBlockScanner :: Scanner -> BlockParser a -> BlockParser a
+withBlockScanner scanner parser = do
+  scanners <- gets blockScanners
+  modify $ \st -> st{ blockScanners = scanners ++ [scanner] }
+  result <- parser
+  modify $ \st -> st{ blockScanners = scanners }
+  return result
+
+data ScanType     = BlockScan | LineScan deriving Eq
+
+-- Apply scanners to next line, and return result if they match.
+-- Skip over empty lines if blockStart.
+nextLine :: ScanType -> BlockParser (Maybe Text)
+nextLine scanType = do
+  lns <- gets inputLines
+  scanners <- gets $ case scanType of
+                           BlockScan -> blockScanners
+                           LineScan  -> lineScanners
+  case lns of
+       []     -> return Nothing
+       (x:xs) -> case applyScanners scanners x of
+                      Just x' -> do
+                         modify $ \st -> st{ inputLines = xs
+                                           , lastLine = Just x }
+                         return $ Just x'
+                      Nothing -> return Nothing
+
+tabFilter :: Int -> Text -> Text
+tabFilter tabstop = T.concat . pad . T.split (== '\t')
+  where pad []  = []
+        pad [t] = [t]
+        pad (t:ts) = let tl = T.length t
+                         n  = tl + tabstop - (tl `mod` tabstop)
+                         in  T.justifyLeft n ' ' t : pad ts
+
+parseBlocks :: Text -> (Blocks, ReferenceMap)
+parseBlocks t = (bs, references s)
+  where (bs, s) = runState (blocksParser Nothing)
+                    BlockParserState{ inputLines = map (tabFilter 4) $ T.lines t
+                                    , lastLine = Nothing
+                                    , references = M.empty
+                                    , lineScanners = []
+                                    , blockScanners = []
+                                    }
+
+isEmptyLine :: Text -> Bool
+isEmptyLine = T.all isSpChar
+  where isSpChar ' '  = True
+        isSpChar _    = False
+
+blocksParser :: Maybe Text -> BlockParser Blocks
+blocksParser mbln =
+  case mbln of
+       Nothing -> nextLine BlockScan >>= maybe (return empty) doLine
+       Just ln -> doLine ln
+ where doLine ln
+         | isEmptyLine ln = do
+             xs <- gets inputLines
+             case xs of
+                  (x:_) | isEmptyLine x -> do
+                      -- two blanklines ends block parsing in a container
+                      bscs <- gets blockScanners
+                      if null bscs
+                         then blocksParser Nothing
+                         else return empty
+                  _ -> blocksParser Nothing
+         | otherwise = do
+          next <- tryScanners
+                    [ (scanBlockquoteStart, blockquoteParser)
+                    , (scanIndentSpace, indentedCodeBlockParser)
+                    , (scanAtxHeaderStart, atxHeaderParser)
+                    , (scanCodeFenceLine, codeFenceParser)
+                    , (scanReference, referenceParser)
+                    , (scanNonindentSpaces >> scanListStart Nothing, listParser)
+                    , (scanHtmlBlockStart, htmlBlockParser)
+                    , (return (), parseLines)
+                    ] ln
+          rest <- blocksParser Nothing
+          return (next <> rest)
+       tryScanners [] _            = error "Empty scanner list"
+       tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
+                                          Just ln' -> p ln ln'
+                                          Nothing  -> tryScanners rest ln
+
+blockquoteParser :: Text -> Text -> BlockParser Blocks
+blockquoteParser _ firstLine = singleton . Blockquote <$>
+  (withLineScanner (opt scanBlockquoteStart)
+    $ withBlockScanner scanBlockquoteStart
+        $ blocksParser $ Just firstLine)
+
+indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
+indentedCodeBlockParser _ ln = do
+  lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
+  return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
+     . reverse . dropWhile T.null . reverse $ (ln:lns)
+ where getLines = nextLine LineScan >>=
+                    maybe (return []) (\l -> (l:) <$> getLines)
+
+atxHeaderParser :: Text -> Text -> BlockParser Blocks
+atxHeaderParser ln _ = do
+  let ln' = T.strip $ T.dropAround (=='#') ln
+  let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
+                       then ln' <> "#"  -- escaped final #
+                       else ln'
+  case parseOnly parseAtxHeaderStart ln of
+        Left _  -> return $ singleton $ Para $ singleton $ Str ln
+        Right lev -> return
+                     $ singleton . Header lev . singleton . Markdown $ inside
+
+codeFenceParser :: Text -> Text -> BlockParser Blocks
+codeFenceParser ln _ = do
+  case parseOnly codeFenceParserLine ln of
+       Left _  -> return $ singleton $ Para $ singleton $ Str ln
+       Right (fence, rawattr) ->
+         singleton . CodeBlock (parseCodeAttributes rawattr)
+          . T.unlines . reverse <$> getLines fence
+   where getLines fence = do
+           mbln <- nextLine LineScan
+           case mbln of
+                Nothing -> return []
+                Just l
+                  | fence `T.isPrefixOf` l -> return []
+                  | otherwise -> (l:) <$> getLines fence
 
 parseCodeAttributes :: Text -> CodeAttr
 parseCodeAttributes t = CodeAttr { codeLang = lang }
@@ -292,471 +426,484 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
                      []    -> Nothing
                      (l:_) -> Just l
 
--- | Parses one of a list of strings (tried in order).
-oneOfStrings :: [String] -> P String
-oneOfStrings []   = fail "no strings"
-oneOfStrings strs = do
-  c <- anyChar
-  let strs' = [xs | (x:xs) <- strs, x == c]
-  case strs' of
-       []  -> fail "not found"
-       z | "" `elem` z -> return [c]
-         | otherwise   -> (c:) `fmap` oneOfStrings strs'
+referenceParser :: Text -> Text -> BlockParser Blocks
+referenceParser first _ = do
+  let getLines = do
+             mbln <- nextLine LineScan
+             case mbln of
+                  Nothing  -> return []
+                  Just ln  -> (ln:) <$> getLines
+  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
+  let raw = joinLines (first:rest)
+  case parseOnly pReference raw of
+       Left  _               -> return $ singleton $ Para
+                                       $ singleton $ Markdown raw
+       Right (lab, url, tit) -> empty <$ addLinkReference lab (url,tit)
 
--- | Parses a URI. Returns pair of original and URI-escaped version.
-uri :: P (Text, Text)
-uri = try $ do
-  let protocols = [ "http:", "https:", "ftp:", "file:", "mailto:",
-                    "news:", "telnet:" ]
-  lookAhead $ oneOfStrings protocols
+pReference :: Parser (Text, Text, Text)
+pReference = do
+  scanNonindentSpaces
+  lab <- pLinkLabel
+  char ':'
+  scanSpnl
+  url <- pLinkUrl
+  scanSpnl
+  tit <- option T.empty $ try $ scanSpnl >> pLinkTitle
+  scanSpaces
+  endOfInput
+  return (lab, url, tit)
+
+listParser :: Text -> Text -> BlockParser Blocks
+listParser first first' = do
+  let listStart = do
+        initialSpaces <- takeWhile (==' ')
+        listType <- parseListMarker
+        return (initialSpaces, listType)
+  (initialSpaces, listType) <-
+        case parseOnly listStart first of
+             Left _   -> fail "Could not parse list marker"
+             Right r  -> return r
+  let scanContentsIndent = () <$ count
+         (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
+  let starter = try $ string initialSpaces *> scanListStart (Just listType)
+  let blockScanner = scanContentsIndent <|> scanBlankline
+  let lineScanner = nfb $
+              scanContentsIndent >> scanSpaces >> scanListStart Nothing
+  firstItem <- withBlockScanner blockScanner
+               $ withLineScanner lineScanner
+               $ blocksParser $ Just first'
+  prev <- gets lastLine
+  let isTight = case prev of
+                     Just l | not (isEmptyLine l) -> True
+                     _                            -> False
+  restItems <- listItemsParser isTight starter blockScanner lineScanner
+  let isTight' = isTight || null restItems
+  return $ singleton $ List isTight' listType (firstItem:restItems)
+
+listItemsParser :: Bool -> Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
+listItemsParser isTight starter blockScanner lineScanner = do
+  mbfirst <- withBlockScanner starter $ nextLine BlockScan
+  case mbfirst of
+       Nothing    -> return []
+       Just first -> do
+         item <- withBlockScanner blockScanner
+                 $ withLineScanner lineScanner
+                 $ blocksParser $ Just first
+         prev <- gets lastLine
+         rest <- case prev of
+                      Just l | isEmptyLine l && isTight -> return []
+                      _                                 ->
+                       listItemsParser isTight starter blockScanner lineScanner
+         return (item:rest)
+
+parseLines :: Text -> Text -> BlockParser Blocks
+parseLines _ firstLine = do
+  processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
+ where getLines = nextLine LineScan >>=
+                    maybe (return []) (\x -> (x:) <$> getLines)
+       paraLine =   nfb scanBlankline
+                 >> nfb scanIndentSpace
+                 >> nfb scanBlockquoteStart
+                 >> nfb scanAtxHeaderStart
+                 >> nfb scanCodeFenceLine
+                 >> nfb (scanSpaces >> scanListStart Nothing)
+
+processLines :: [Text] -> Blocks
+processLines [] = empty
+processLines ws =
+  case break isSpecialLine ws of
+        (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
+        (xs,(y:ys))
+          | isSetextLine y ->
+              case reverse xs of
+                    []     -> Header (setextLevel y) empty
+                              <| processLines ys
+                    [z]    -> Header (setextLevel y) (markdown z)
+                              <| processLines ys
+                    (z:zs) -> Para (markdown $ joinLines $ reverse zs)
+                           <| Header (setextLevel y) (markdown z)
+                           <| processLines ys
+          | isHruleLine y  ->
+              case xs of
+                    []     -> HRule
+                              <| processLines ys
+                    _      -> Para (markdown $ joinLines xs)
+                              <| HRule
+                              <| processLines ys
+          | otherwise      -> error "Should not happen"
+  where isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
+        isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
+        isSetextLine  x = isSetext1Line x || isSetext2Line x
+        setextLevel   x = if isSetext1Line x then 1 else 2
+        isHruleLine = maybe False (const True) . applyScanners [scanHRuleLine]
+        isSpecialLine x = isSetextLine x || isHruleLine x
+        markdown = singleton . Markdown . T.strip
+
+-- Utility parsers.
+
+joinLines :: [Text] -> Text
+joinLines = T.intercalate "\n"
+
+pEscapedChar :: Parser Char
+pEscapedChar = try $ char '\\' *> satisfy isEscapable
+
+isEscapable :: Char -> Bool
+isEscapable c = isSymbol c || isPunctuation c
+
+-- parses a character satisfying the predicate, but understands escaped
+-- symbols
+pSatisfy :: (Char -> Bool) -> Parser Char
+pSatisfy p =
+  satisfy (\c -> c /= '\\' && p c)
+   <|> try (char '\\' *> satisfy (\c -> isEscapable c && p c))
+
+pAnyChar :: Parser Char
+pAnyChar = pSatisfy (const True)
+
+pNonspaceChar :: Parser Char
+pNonspaceChar = pSatisfy isNonspaceChar
+  where isNonspaceChar ' '  = False
+        isNonspaceChar '\n' = False
+        isNonspaceChar '\r' = False
+        isNonspaceChar _    = True
+
+data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
+
+-- returns name of tag needed to close, and whole tag
+pHtmlTag :: Parser (HtmlTagType, Text)
+pHtmlTag = try $ do
+  char '<'
+  -- do not end the tag with a > character in a quoted attribute.
+  closing <- (char '/' >> return True) <|> return False
+  tagname <- T.toLower <$>
+                takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
+  let attr = do ss <- takeWhile isSpace
+                x <- letter
+                xs <- takeWhile (\c -> isAlphaNum c || c == ':')
+                skip (=='=')
+                v <- pQuoted '"' <|> pQuoted '\'' <|> takeWhile1 isAlphaNum
+                      <|> return ""
+                return $ ss <> T.singleton x <> xs <> "=" <> v
+  attrs <- T.concat <$> many (try attr)
+  final <- takeWhile (\c -> isSpace c || c == '/')
+  char '>'
+  let tagtype = if closing
+                   then Closing tagname
+                   else case T.stripSuffix "/" final of
+                         Just _  -> SelfClosing tagname
+                         Nothing -> Opening tagname
+  return (tagtype,
+          T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
+
+pHtmlComment :: Parser Text
+pHtmlComment = try $ do
+  string "<!--"
+  rest <- manyTill anyChar (try $ string "-->")
+  return $ "<!--" <> T.pack rest <> "-->"
+
+pQuoted :: Char -> Parser Text
+pQuoted c = try $ do
+  char c
+  contents <- takeTill (== c)
+  char c
+  return (T.singleton c <> contents <> T.singleton c)
+
+pLinkLabel :: Parser Text
+pLinkLabel = try $ char '[' *> (T.concat <$>
+  (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
+  where regChunk = T.pack <$> many1 (pSatisfy (notInClass "`[]"))
+        codeChunk = snd <$> pCode'
+        bracketed = inBrackets <$> pLinkLabel
+        inBrackets t = "[" <> t <> "]"
+
+pLinkUrl :: Parser Text
+pLinkUrl = try $ do
+  inPointy <- (char '<' >> return True) <|> return False
+  if inPointy
+     then takeWhile (notInClass "\r\n>") <* char '>'
+     else T.concat <$> many (regChunk <|> parenChunk)
+    where regChunk = takeWhile1 (notInClass " \r\n()")
+          parenChunk = inParens . T.concat <$> (char '(' *>
+                         manyTill (regChunk <|> parenChunk) (char ')'))
+          inParens x = "(" <> x <> ")"
+
+pLinkTitle :: Parser Text
+pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
+  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
+        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
+        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
+
+blockHtmlTags :: Set.Set Text
+blockHtmlTags = Set.fromList
+ [ "article", "header", "aside", "hgroup", "blockquote", "hr",
+   "body", "li", "br", "map", "button", "object", "canvas", "ol",
+   "caption", "output", "col", "p", "colgroup", "pre", "dd",
+   "progress", "div", "section", "dl", "table", "dt", "tbody",
+   "embed", "textarea", "fieldset", "tfoot", "figcaption", "th",
+   "figure", "thead", "footer", "footer", "tr", "form", "ul",
+   "h1", "h2", "h3", "h4", "h5", "h6", "video"]
+
+htmlBlockParser :: Text -> Text -> BlockParser Blocks
+htmlBlockParser ln _ = go (parse pHtmlBlock ln)
+  where go x = case x of
+                    Fail unparsed _ _ -> return $ processLines
+                                                $ T.lines unparsed
+                    Partial f         -> nextLine BlockScan >>=
+                                             go . f .  maybe "" ("\n" <>)
+                    Done unparsed r   -> return $ r <>
+                                         if T.null unparsed
+                                            then empty
+                                            else processLines (T.lines unparsed)
+
+pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
+pInBalancedTags mbtag = try $ do
+  (tagtype, opener) <- maybe pHtmlTag return mbtag
+  case tagtype of
+       SelfClosing _ -> return opener
+       Closing _     -> mzero
+       Opening name  -> (opener <>) <$> getRest name
+  where getRest name = try $ do
+          nontag <- T.pack <$> many (notChar '<')
+          (tagtype', x') <- pHtmlTag
+          case tagtype' of
+               Closing n | n == name -> do
+                 return $ nontag <> x'
+               Opening n | n == name -> do
+                 chunk <- pInBalancedTags (Just (tagtype',x'))
+                 rest <- getRest name
+                 return $ nontag <> chunk <> rest
+               _  -> ((nontag <> x') <>) <$> getRest name
+
+pHtmlBlock :: Parser Blocks
+pHtmlBlock = singleton . HtmlBlock <$>
+  ((pInBalancedTags Nothing <|> pHtmlComment))
+
+parseInlines :: ReferenceMap -> Text -> Inlines
+parseInlines refmap t =
+  case parseOnly (msum <$> many (pInline refmap) <* endOfInput) t of
+       Left e   -> singleton $ Err (T.strip t) (T.pack $ show e)
+       Right r  -> r
+
+pInline :: ReferenceMap -> Parser Inlines
+pInline refmap =
+           pSpace
+       <|> pStr
+       <|> pEnclosure '*' refmap
+       <|> pEnclosure '_' refmap
+       <|> pLink refmap
+       <|> pImage refmap
+       <|> pCode
+       <|> pEntity
+       <|> pRawHtml
+       <|> pInPointyBrackets
+       <|> pSym
+
+pSpace :: Parser Inlines
+pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
+  where pSpaceSpace = scanSpace >>
+            (pSpaceNewline <|> pSpaceLB <|> return Space)
+        pSpaceLB = scanSpace >> scanSpaces >>
+                      ((pSpaceNewline >> return LineBreak) <|> return Space)
+        pSpaceNewline = endOfLine >> scanSpaces >> return SoftBreak
+
+pStr :: Parser Inlines
+pStr = do
+  let strChunk = takeWhile1 isAlphaNum
+  let underscore = string "_"
+  s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
+  if s `elem` uriProtocols
+     then try (pUri s) <|> return (singleton $ Str s)
+     else return (singleton $ Str s)
+
+pSym :: Parser Inlines
+pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
+
+uriProtocols :: [Text]
+uriProtocols =
+  [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
+
+pUri :: Text -> Parser Inlines
+pUri protocol = do
+  char ':'
   -- Scan non-ascii characters and ascii characters allowed in a URI.
   -- We allow punctuation except when followed by a space, since
   -- we don't want the trailing '.' in 'http://google.com.'
-  let innerPunct = try $ pSatisfy isPunctuation <*
-                         notFollowedBy (newline <|> pSpaceChar)
-  let uriChar = innerPunct <|>
-                pSatisfy (\c -> not (isPunctuation c) &&
-                            (not (isAscii c) || isAllowedInURI c))
+  let isUriChar c = not (isPunctuation c) &&
+                       (not (isAscii c) || isAllowedInURI c)
   -- We want to allow
   -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
   -- as a URL, while NOT picking up the closing paren in
   -- (http://wikipedia.org)
   -- So we include balanced parens in the URL.
   let inParens = try $ do char '('
-                          res <- many uriChar
+                          res <- takeWhile isUriChar
                           char ')'
-                          return $ '(' : res ++ ")"
-  str <- concat <$> many1 (inParens <|> count 1 (innerPunct <|> uriChar))
-  str' <- option str $ char '/' >> return (str ++ "/")
+                          return $ "(" <> res <> ")"
+  let innerPunct = T.singleton <$> try (char '/'
+        <|> (pSatisfy isPunctuation <* nfb space <* nfb endOfInput))
+  let uriChunk = takeWhile1 isUriChar <|> inParens <|> innerPunct
+  rest <- T.concat <$> many1 uriChunk
   -- now see if they amount to an absolute URI
-  let escapeURI = escapeURIString (not . isSpace)
-  case parseURI (escapeURI str') of
-       Just uri' -> if uriScheme uri' `elem` protocols
-                       then return (T.pack str', T.pack $ show uri')
-                       else fail "not a URI"
+  let rawuri = protocol <> ":" <> rest
+  case parseURI (T.unpack $ escapeUri rawuri) of
+       Just uri' -> return $ singleton $ Link (singleton $ Str rawuri)
+                                  (T.pack $ show uri') (T.empty)
        Nothing   -> fail "not a URI"
 
--- | Parses an email address; returns original and corresponding
--- escaped mailto: URI.
-emailAddress :: P (Text, Text)
-emailAddress = try $ do
-  firstLetter <- alphaNum
-  restAddr <- many emailChar
-  let addr = firstLetter:restAddr
-  char '@'
-  dom <- domain
-  let full = addr ++ '@':dom
-  return (T.pack full, T.pack $ escapeURIString (not . isSpace)
-                        $ "mailto:" ++ full)
- where emailChar = alphaNum <|> oneOf "-+_."
-       domainChar = alphaNum <|> char '-'
-       domain = intercalate "." <$> (many1 domainChar `sepBy1` (char '.'))
+escapeUri :: Text -> Text
+escapeUri = T.pack . escapeURIString (not . isSpace) . T.unpack
 
-data HtmlTagType = Opening Text | Closing Text | SelfClosing Text
+isEnclosureChar :: Char -> Bool
+isEnclosureChar '*' = True
+isEnclosureChar '_' = True
+isEnclosureChar _   = False
 
--- returns name of tag needed to close, and whole tag
-pHtmlTag :: P (HtmlTagType, Text)
-pHtmlTag = try $ do
-  char '<'
-  -- do not end the tag with a > character in a quoted attribute.
-  closing <- (char '/' >> return True) <|> return False
-  tagname <- T.toLower . T.pack <$> many1 alphaNum
-  lookAhead $ oneOf " \t\r\n/>"
-  chunks <- manyTill (pQuoted '\'' <|> pQuoted '"'
-                       <|> many1 (noneOf "\"'<>"))  (char '>')
-  let body = concat chunks
-  let tagtype = if closing
-                   then Closing tagname
-                   else case reverse body of
-                         ('/':_) -> SelfClosing tagname
-                         _       -> Opening tagname
-  return (tagtype, T.pack ('<' : ['/' | closing]) <> tagname <> T.pack body
-                            <> ">")
+pEnclosure :: Char -> ReferenceMap -> Parser Inlines
+pEnclosure c refmap = do
+  cs <- takeWhile1 (== c)
+  (Str cs <|) <$> pSpace
+   <|> case T.length cs of
+            3  -> pThree c refmap
+            2  -> pTwo c refmap empty
+            1  -> pOne c refmap empty
+            _  -> return (singleton $ Str cs)
 
-pQuoted :: Char -> P String
-pQuoted c = try $ do
-  char c
-  contents <- manyTill (satisfy (/= c)) (char c)
-  return (c : contents ++ [c])
+-- singleton sequence or empty if contents are empty
+single :: (Inlines -> Inline) -> Inlines -> Inlines
+single constructor ils = if Seq.null ils
+                            then empty
+                            else singleton (constructor ils)
 
--- Block-level parsers.
+-- parse inlines til you hit a c, and emit Emph.
+-- if you never hit a c, emit '*' + inlines parsed.
+pOne :: Char -> ReferenceMap -> Inlines -> Parser Inlines
+pOne c refmap prefix = do
+  contents <- msum <$> many ( (nfb (char c) >> pInline refmap)
+                             <|> (try $ string (T.pack [c,c]) >>
+                                  nfb (char c) >> pTwo c refmap prefix) )
+  (char c >> return (single Emph $ prefix <> contents))
+    <|> return (singleton (Str (T.singleton c)) <> (prefix <> contents))
 
-pDoc :: P Blocks
-pDoc = pBlocks (return ()) (return ()) <* skipMany pBlankline <* eof
+-- parse inlines til you hit two c's, and emit Strong.
+-- if you never do hit two c's, emit '**' plus + inlines parsed.
+pTwo :: Char -> ReferenceMap -> Inlines -> Parser Inlines
+pTwo c refmap prefix = do
+  let ender = string $ T.pack [c,c]
+  contents <- msum <$> many (nfb ender >> pInline refmap)
+  (ender >> return (single Strong $ prefix <> contents))
+    <|> return (singleton (Str $ T.pack [c,c]) <> (prefix <> contents))
 
-pBlock :: P Blocks
-pBlock = pBlockquote
-     <|> pAtxHeader
-     <|> pHrule
-     <|> pList
-     <|> pCodeFence
-     <|> pCodeBlock
-     <|> pReference
-     <|> pHtmlBlock
-     <|> pPara
+-- parse inlines til you hit one c or a sequence of two c's.
+-- If one c, emit Emph and then parse pTwo.
+-- if two c's, emit Strong and then parse pOne.
+pThree :: Char -> ReferenceMap -> Parser Inlines
+pThree c refmap = do
+  contents <- msum <$> (many (nfb (char c) >> pInline refmap))
+  (string (T.pack [c,c]) >> (pOne c refmap (single Strong contents)))
+   <|> (char c >> (pTwo c refmap (single Emph contents)))
+   <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
-pInBalancedTags :: P Text
-pInBalancedTags = try $ do
-  (tagtype, opener) <- pHtmlTag
-  case tagtype of
-       SelfClosing _ -> return opener
-       Closing _     -> mzero
-       Opening name  -> (opener <>) <$> getRest name
-  where getRest name = try $ do
-          nontag <- T.pack <$> many (satisfy (/='<'))
-          (tagtype', x') <- lookAhead pHtmlTag
-          case tagtype' of
-               Closing n | n == name -> do
-                 _ <- pHtmlTag
-                 return $ nontag <> x'
-               Opening n | n == name -> do
-                 chunk <- pInBalancedTags
-                 rest <- getRest name
-                 return $ nontag <> chunk <> rest
-               _  -> do
-                 _ <- pHtmlTag
-                 rest <- getRest name
-                 return $ (nontag <> x') <> rest
+pCode :: Parser Inlines
+pCode = fst <$> pCode'
 
-pHtmlBlock :: P Blocks
-pHtmlBlock = singleton . HtmlBlock <$>
-  ((pInBalancedTags <|> pHtmlComment) <* skipMany pBlankline)
+pCode' :: Parser (Inlines, Text)
+pCode' = try $ do
+  ticks <- takeWhile1 (== '`')
+  let end = try $ string ticks >> nfb (char '`')
+  let nonBacktickSpan = takeWhile1 (/= '`')
+  let backtickSpan = takeWhile1 (== '`')
+  contents <- T.concat <$> manyTill (nonBacktickSpan <|> backtickSpan) end
+  return (singleton . Code . T.strip $ contents, ticks <> contents <> ticks)
 
-pHtmlComment :: P Text
-pHtmlComment = try $ do
-  string "<!--"
-  rest <- manyTill anyChar (try $ string "-->")
-  return $ "<!--" <> T.pack rest <> "-->"
-
-pReference :: P Blocks
-pReference = try $ do
-  pNonindentSpaces
+pLink :: ReferenceMap -> Parser Inlines
+pLink refmap = do
   lab <- pLinkLabel
-  char ':'
-  pSpnl
-  url <- pLinkUrl
-  tit <- option T.empty $ try $ pSpnl >> pLinkTitle
-  pBlankline
-  addLinkReference lab (url,tit)
-  return empty
-
-pLinkLabel :: P Text
-pLinkLabel = try $ char '[' *>
-  (T.concat <$> (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
-  where regChunk = T.pack <$> many1 (pSatisfy (`notElem` "`[]"))
-        codeChunk = snd <$> withRaw pCode
-        bracketed = inBrackets <$> pLinkLabel
-        inBrackets t = "[" <> t <> "]"
-
-pLinkUrl :: P Text
-pLinkUrl = try $ do
-  inPointy <- (char '<' >> return True) <|> return False
-  T.pack <$> if inPointy
-                then manyTill (pSatisfy (`notElem` "\r\n>")) (char '>')
-                else concat <$> many (regChunk <|> parenChunk)
-               where regChunk = many1 (pSatisfy (`notElem` " \t\r\n()"))
-                     parenChunk = inParens . concat <$>
-                                  (char '(' *>
-                                  manyTill (regChunk <|> parenChunk) (char ')'))
-                     inParens x = '(' : x ++ ")"
-
-pLinkTitle :: P Text
-pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
-  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
-        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
-        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
-
-pHruleLine :: P ()
-pHruleLine = do
-  pNonindentSpaces
-  c <- oneOf "*-_"
-  count 2 (try $ pSp >> char c)
-  skipMany $ try $ pSp >> char c
-  pSp
-  lookAhead newline
-  return ()
-
-pHrule :: P Blocks
-pHrule = singleton HRule <$ try pHruleLine
-
-pSp :: P ()
-pSp = skipMany pSpaceChar
-
-pSpnl :: P ()
-pSpnl = try $ pSp *> optional (newline *> pSp)
-
-joinLines :: [Text] -> Text
-joinLines = T.intercalate (T.pack "\n")
-
--- handles paragraphs and setext headers and hrules
-pPara :: P Blocks
-pPara = processLines . filter (not . T.null)
-       <$> withBeginLineScanner paraLine (pLine `sepBy1` pBeginLine)
- where paraLine = notFollowedBy pBlankline
-                >> notFollowedBy pIndentSpace
-                >> notFollowedBy pBlockquoteStart
-                >> notFollowedBy pAtxHeaderStart
-                >> notFollowedBy (try $ pSp >> pListMarker)
-                >> notFollowedBy pCodeFenceLine
-       markdown = singleton . Markdown . T.strip
-       processLines [] = empty
-       processLines ws =
-         case break isSpecialLine ws of
-               (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
-               (xs,(y:ys))
-                 | isSetextLine y ->
-                     case reverse xs of
-                           []     -> Header (setextLevel y) empty
-                                     <| processLines ys
-                           [z]    -> Header (setextLevel y) (markdown z)
-                                     <| processLines ys
-                           (z:zs) -> Para (markdown $ joinLines $ reverse zs)
-                                  <| Header (setextLevel y) (markdown z)
-                                  <| processLines ys
-                 | isHruleLine y  ->
-                     case xs of
-                           []     -> HRule
-                                     <| processLines ys
-                           _      -> Para (markdown $ joinLines xs)
-                                     <| HRule
-                                     <| processLines ys
-                 | otherwise      -> error "Should not happen"
-       isSetext1Line x = not (T.null x) && T.all (=='=') x
-       isSetext2Line x = not (T.null x) && T.all (=='-') x
-       isSetextLine  x = isSetext1Line x || isSetext2Line x
-       setextLevel   x = if isSetext1Line x then 1 else 2
-       isHruleLine x = case runP pHruleLine startingState "" x of
-                            Right _ -> True
-                            Left _  -> False
-       isSpecialLine x = isSetextLine x || isHruleLine x
-
-pBlockquote :: P Blocks
-pBlockquote = singleton . Blockquote <$>
-  try (pBlockquoteStart >> pBlocks (optional pBlockquoteStart) pBlockquoteStart)
-
-pCodeFence :: P Blocks
-pCodeFence = try $ do
-  (fence, attr) <- pCodeFenceLine
-  lns <- manyTill pLine (try $ string fence >> pLine)
-  return $ singleton $ CodeBlock attr $ T.unlines lns
-
-pCodeBlock :: P Blocks
-pCodeBlock = try $ do
-  pIndentSpace
-  singleton . CodeBlock CodeAttr{ codeLang = Nothing } . T.unlines
-    <$> withBeginLineScanner pIndentSpace (pLine `sepBy1` pBeginLine)
-
-pList :: P Blocks
-pList = try $ do
-  sps <- pNonindentSpaces
-  col <- sourceColumn <$> getPosition
-  listType <- pListMarker
-  col' <- sourceColumn <$> getPosition
-  let sublistIndent = () <$ count (col' - col - 1) (char ' ')
-  let starter = try $ string sps *> pListStart listType
-  let listItemBlocks =
-        pBlocks (notFollowedBy
-                  (try $ string sps >> sublistIndent >> pSp >> pListMarker))
-                (try $ (string sps >> sublistIndent)
-                   <|> lookAhead (try $ pBlankline *> notFollowedBy pBlankline))
-  first <- listItemBlocks
-  isTight <- (== 0) <$> (lookAhead pBlockSep <|> return 0)
-  let listItem = try $ do
-        num <- pBlockSep
-        when (isTight && num > 0) $
-           fail "Change in tightness ends list"
-        starter
-        blocks <- listItemBlocks
-        return blocks
-  rest <- many listItem
-  let isTight' = if null rest then True else isTight
-  return $ singleton $ List isTight' listType (first:rest)
-
-pListMarker :: P ListType
-pListMarker = pBullet <|> pListNumber
-
-pBullet :: P ListType
-pBullet = Bullet <$> oneOf "*+-" <* (pSpaceChar <|> lookAhead newline)
-
-pListNumber :: P ListType
-pListNumber =
-  (pListNumberDig <|> pListNumberPar) <* (pSpaceChar <|> lookAhead newline)
-  where pListNumberDig = try $ do
-           num <- read <$> many1 digit
-           wrap <-  PeriodFollowing <$ char '.'
-                <|> ParenFollowing <$ char ')'
-           return $ Numbered wrap num
-        pListNumberPar = try $ do
-           char '('
-           num <- read <$> many1 digit
-           char ')'
-           return $ Numbered ParensAround num
-
-pListStart :: ListType -> P ()
-pListStart (Bullet   c) = () <$ notFollowedBy pHruleLine <* char c <* pSpaceChar
-pListStart (Numbered w _) = try $ do
-  marker <- pListNumber
-  case marker of
-        Numbered w' _ | w == w' -> return ()
-        _                       -> fail "Change in list style"
-
-pAtxHeaderStart :: P Int
-pAtxHeaderStart = length <$> try (many1 (char '#') <* pSpaceChar)
-
-pAtxHeader :: P Blocks
-pAtxHeader = do
-  lev <- pAtxHeaderStart
-  singleton . Header lev . singleton . Markdown . stripClosingHashes <$> pLine
-   where stripClosingHashes = T.strip . T.dropAround (=='#') . T.strip
-
-parseInlines :: ReferenceMap -> Text -> Inlines
-parseInlines refmap t =
-  case runP (msum <$> many pInline <* eof) st "" t of
-                           Left e  -> singleton $ Err t' (T.pack $ show e)
-                           Right r -> r
- where st = startingState{ linkReferences = refmap }
-       t' = T.strip t
-
-pInline :: P Inlines
-pInline =  pSpace
-       <|> pUri
-       <|> pStr
-       <|> pStrong '*'
-       <|> pStrong '_'
-       <|> pEmph '*'
-       <|> pEmph '_'
-       <|> pLink
-       <|> pImage
-       <|> pCode
-       <|> pEntity
-       <|> pAutolink
-       <|> pRawHtml
-       <|> pSym
-
-pSpace :: P Inlines
-pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
-  where pSpaceSpace = try $ pSpaceChar >>
-            (pSpaceNewline <|> pSpaceLB <|> return Space)
-        pSpaceLB = try $ pSpaceChar >> pSp >>
-                      ((pSpaceNewline >> return LineBreak) <|> return Space)
-        pSpaceNewline = newline >> pSp >> return SoftBreak
-
-pStr :: P Inlines
-pStr = do
-  first <- alphaNum
-  rest <- many $ alphaNum <|> (try $ char '_' <* lookAhead alphaNum)
-  return $ singleton . Str . T.pack $ first:rest
-
-pSym :: P Inlines
-pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
-
-pUri :: P Inlines
-pUri = do
-  (orig,escaped) <- uri
-  return $ singleton $ Link (singleton $ Str orig) escaped (T.empty)
-
-pEmph :: Char -> P Inlines
-pEmph c = try $ do
-  char c
-  notFollowedBy pSpaceChar
-  contents <- msum <$>
-     many1 ( (try $ notFollowedBy (char c) >> pInline) <|> pStrong c )
-  (char c >> return (singleton (Emph contents)))
-    <|> return (Str (T.pack "*") <| contents)
-
-pStrong :: Char -> P Inlines
-pStrong c = try $ do
-  let marker = try $ char c >> char c
-  marker
-  notFollowedBy pSpaceChar
-  contents <- msum <$> many1 (try $ notFollowedBy marker >> pInline)
-  marker
-  return (singleton (Strong contents))
-
-pCode :: P Inlines
-pCode = try $ do
-  numticks <- length <$> many1 (char '`')
-  pSp
-  let end = try $ count numticks (char '`') *> notFollowedBy (char '`')
-  let nonBacktickSpan = many1 (noneOf "`")
-  let backtickSpan = many1 (char '`')
-  singleton . Code . T.strip . T.pack . concat
-   <$> manyTill (nonBacktickSpan <|> backtickSpan) end
-
-pLink :: P Inlines
-pLink = try $ do
-  lab <- pLinkLabel
-  refmap <- linkReferences <$> getState
   let lab' = parseInlines refmap lab
-  pInlineLink lab' <|> pReferenceLink lab lab'
+  pInlineLink lab' <|> pReferenceLink refmap lab lab'
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
-pInlineLink :: Inlines -> P Inlines
+pInlineLink :: Inlines -> Parser Inlines
 pInlineLink lab = try $ do
   char '('
-  pSp
+  scanSpaces
   url <- pLinkUrl
-  tit <- option "" $ try $ pSpnl *> pLinkTitle <* pSp
+  tit <- option "" $ try $ scanSpnl *> pLinkTitle <* scanSpaces
   char ')'
   return $ singleton $ Link lab url tit
 
-pReferenceLink :: Text -> Inlines -> P Inlines
-pReferenceLink rawlab lab = try $ do
-  ref <- option rawlab $ try $ pSpnl >> pLinkLabel
+pReferenceLink :: ReferenceMap -> Text -> Inlines -> Parser Inlines
+pReferenceLink refmap rawlab lab = try $ do
+  ref <- option rawlab $ try $ scanSpaces >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
-  lookupResult <- lookupLinkReference ref'
-  case lookupResult of
+  case lookupLinkReference refmap ref' of
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
 
-pImage :: P Inlines
-pImage = try $ do
+pImage :: ReferenceMap -> Parser Inlines
+pImage refmap = try $ do
   char '!'
   let linkToImage (Link lab url tit) = Image lab url tit
       linkToImage x                  = x
-  fmap linkToImage <$> pLink
+  fmap linkToImage <$> pLink refmap
 
-pRawHtml :: P Inlines
-pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
-
-pEntity :: P Inlines
+pEntity :: Parser Inlines
 pEntity = try $ do
   char '&'
   res <- pCharEntity <|> pDecEntity <|> pHexEntity
   char ';'
-  return $ singleton $ Entity $ T.pack $ '&':res ++ ";"
+  return $ singleton $ Entity $ "&" <> res <> ";"
 
-pCharEntity :: P [Char]
-pCharEntity = many1 letter
+pCharEntity :: Parser Text
+pCharEntity = takeWhile1 (\c -> isAscii c && isLetter c)
 
-pDecEntity :: P [Char]
+pDecEntity :: Parser Text
 pDecEntity = try $ do
   char '#'
-  res <- many1 digit
-  return $ '#':res
+  res <- takeWhile1 isDigit
+  return $ "#" <> res
 
-pHexEntity :: P [Char]
+pHexEntity :: Parser Text
 pHexEntity = try $ do
   char '#'
-  x <- oneOf "Xx"
-  res <- many1 hexDigit
-  return $ '#':x:res
+  x <- char 'X' <|> char 'x'
+  res <- takeWhile1 isHexDigit
+  return $ "#" <> T.singleton x <> res
 
-pAutolink :: P Inlines
-pAutolink = try $ char '<' *> (pUri <|> pEmailAddress) <* char '>'
+pRawHtml :: Parser Inlines
+pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 
-pEmailAddress :: P Inlines
-pEmailAddress = do
-  (orig,escaped) <- emailAddress
-  return $ singleton $ Link (singleton $ Str orig) escaped (T.empty)
+pInPointyBrackets :: Parser Inlines
+pInPointyBrackets = try $ do
+  char '<'
+  t <- takeWhile1 (/='>')
+  char '>'
+  case t of
+       _ | startsWithProtocol t -> return $ autoLink t
+         | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
+         | otherwise   -> fail "Unknown contents of <>"
+
+scanMatches :: Scanner -> Text -> Bool
+scanMatches scanner t =
+  case parseOnly scanner t of
+       Right ()   -> True
+       _          -> False
+
+startsWithProtocol :: Text -> Bool
+startsWithProtocol =
+  scanMatches $ choice (map string uriProtocols) >> skip (== ':')
+
+autoLink :: Text -> Inlines
+autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
+
+emailLink :: Text -> Inlines
+emailLink t = singleton $ Link (singleton $ Str t)
+                               (escapeUri $ "mailto:" <> t) (T.empty)
 
 -- blocks
 
-parseMarkdown :: Text -> Either ParseError Blocks
-parseMarkdown t =
-  case parseBlocks (t <> "\n") of
-       Left err            -> Left err
-       Right (bls, refmap) -> Right $ processBlocks refmap bls
+parseMarkdown :: Text -> Blocks
+parseMarkdown t = processBlocks refmap bls
+  where (bls, refmap) = parseBlocks (t <> "\n")
 
 processBlocks :: ReferenceMap -> Blocks -> Blocks
 processBlocks refmap = fmap processBl
@@ -813,7 +960,7 @@ renderInlines = foldMap renderInline
   where renderInline :: Inline -> Html
         renderInline (Str t) = toHtml t
         renderInline Space   = " "
-        renderInline SoftBreak = "\n"
+        renderInline SoftBreak = " " -- or \n optionally
         renderInline LineBreak = H.br <> "\n"
         renderInline (Emph ils) = H.em $ renderInlines ils
         renderInline (Strong ils) = H.strong $ renderInlines ils
