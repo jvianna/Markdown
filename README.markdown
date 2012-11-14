@@ -11,3 +11,7 @@ Several markdown extensions are implemented, including fenced code
 blocks and significant list start numbers.  All URLs are made into
 hyperlinks.
 
+It will be open sourced in due time.
+
+Copyright &copy; 2012 John MacFarlane.
+
