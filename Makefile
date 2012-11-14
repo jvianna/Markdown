@@ -4,7 +4,8 @@ Markdown: Markdown.hs
 .PHONY: clean test
 
 test:
-	./shtest -t -p ./Markdown tests/Markdown/
+	make -C tests --quiet
 
 clean:
-	rm *.o *.hi Markdown
+	-rm *.o *.hi Markdown; \
+	  make -C tests clean
