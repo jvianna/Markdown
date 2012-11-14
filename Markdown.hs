@@ -137,7 +137,16 @@ startingState = ParserState{
        , linkReferences = M.empty
        }
 
+
+-----
 type P = GenParser ParserState
+
+parseBlocks :: Text -> (Blocks, ReferenceMap)
+parseBlocks = undefined
+
+
+{-
+ 
 
 parseBlocks :: Text -> Either ParseError (Blocks, ReferenceMap)
 parseBlocks = runP withRefs startingState "input"
@@ -212,6 +221,8 @@ pBeginBlock = try $ getState >>= sequence_ . beginBlockScanners
 pBeginLine :: P ()
 pBeginLine = try $ getState >>= sequence_ . beginLineScanners
 
+-}
+
 -- Utility parsers.
 
 -- | Applies a parser and returns the raw text that was parsed,
@@ -277,6 +288,15 @@ pLine :: P Text
 pLine = T.pack <$> (  manyTill (satisfy (/='\n')) newline
                   <|> many1 anyChar  -- for last line w/o newline
                    )
+
+pSp :: P ()
+pSp = skipMany pSpaceChar
+
+pSpnl :: P ()
+pSpnl = try $ pSp *> optional (newline *> pSp)
+
+joinLines :: [Text] -> Text
+joinLines = T.intercalate (T.pack "\n")
 
 pCodeFenceLine :: P (String, CodeAttr)
 pCodeFenceLine = try $ do
@@ -379,6 +399,34 @@ pQuoted c = try $ do
   contents <- manyTill (satisfy (/= c)) (char c)
   return (c : contents ++ [c])
 
+pLinkLabel :: P Text
+pLinkLabel = try $ char '[' *>
+  (T.concat <$> (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
+  where regChunk = T.pack <$> many1 (pSatisfy (`notElem` "`[]"))
+        codeChunk = snd <$> withRaw pCode
+        bracketed = inBrackets <$> pLinkLabel
+        inBrackets t = "[" <> t <> "]"
+
+pLinkUrl :: P Text
+pLinkUrl = try $ do
+  inPointy <- (char '<' >> return True) <|> return False
+  T.pack <$> if inPointy
+                then manyTill (pSatisfy (`notElem` "\r\n>")) (char '>')
+                else concat <$> many (regChunk <|> parenChunk)
+               where regChunk = many1 (pSatisfy (`notElem` " \t\r\n()"))
+                     parenChunk = inParens . concat <$>
+                                  (char '(' *>
+                                  manyTill (regChunk <|> parenChunk) (char ')'))
+                     inParens x = '(' : x ++ ")"
+
+pLinkTitle :: P Text
+pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
+  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
+        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
+        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
+
+
+{-
 -- Block-level parsers.
 
 pDoc :: P Blocks
@@ -440,32 +488,6 @@ pReference = try $ do
   addLinkReference lab (url,tit)
   return empty
 
-pLinkLabel :: P Text
-pLinkLabel = try $ char '[' *>
-  (T.concat <$> (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
-  where regChunk = T.pack <$> many1 (pSatisfy (`notElem` "`[]"))
-        codeChunk = snd <$> withRaw pCode
-        bracketed = inBrackets <$> pLinkLabel
-        inBrackets t = "[" <> t <> "]"
-
-pLinkUrl :: P Text
-pLinkUrl = try $ do
-  inPointy <- (char '<' >> return True) <|> return False
-  T.pack <$> if inPointy
-                then manyTill (pSatisfy (`notElem` "\r\n>")) (char '>')
-                else concat <$> many (regChunk <|> parenChunk)
-               where regChunk = many1 (pSatisfy (`notElem` " \t\r\n()"))
-                     parenChunk = inParens . concat <$>
-                                  (char '(' *>
-                                  manyTill (regChunk <|> parenChunk) (char ')'))
-                     inParens x = '(' : x ++ ")"
-
-pLinkTitle :: P Text
-pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
-  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
-        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
-        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
-
 pHruleLine :: P ()
 pHruleLine = do
   pNonindentSpaces
@@ -478,15 +500,6 @@ pHruleLine = do
 
 pHrule :: P Blocks
 pHrule = singleton HRule <$ try pHruleLine
-
-pSp :: P ()
-pSp = skipMany pSpaceChar
-
-pSpnl :: P ()
-pSpnl = try $ pSp *> optional (newline *> pSp)
-
-joinLines :: [Text] -> Text
-joinLines = T.intercalate (T.pack "\n")
 
 -- handles paragraphs and setext headers and hrules
 pPara :: P Blocks
@@ -608,6 +621,9 @@ pAtxHeader = do
   lev <- pAtxHeaderStart
   singleton . Header lev . singleton . Markdown . stripClosingHashes <$> pLine
    where stripClosingHashes = T.strip . T.dropAround (=='#') . T.strip
+
+
+-}
 
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
@@ -752,11 +768,9 @@ pEmailAddress = do
 
 -- blocks
 
-parseMarkdown :: Text -> Either ParseError Blocks
-parseMarkdown t =
-  case parseBlocks (t <> "\n") of
-       Left err            -> Left err
-       Right (bls, refmap) -> Right $ processBlocks refmap bls
+parseMarkdown :: Text -> Blocks
+parseMarkdown t = processBlocks refmap bls
+  where (bls, refmap) = parseBlocks (t <> "\n")
 
 processBlocks :: ReferenceMap -> Blocks -> Blocks
 processBlocks refmap = fmap processBl
