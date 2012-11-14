@@ -2,18 +2,6 @@
 
 {-
 
-PERFORMANCE
-
-Faster than pandoc and with better memory usage.
-Both compiled with -O2.  Latest dev pandoc 1.10.
-Benchmarked on 178K markdown file.
-
-                          Markdown       pandoc -f markdown_strict
-max bytes residency        2045484                         5752636
-total cpu time              0.293s                          0.542s
-
-Still not up with the C implementations.
-
 TODO
 
 _ explore a line-based approach?
