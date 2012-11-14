@@ -40,6 +40,7 @@ QUESTIONS
 
 module Markdown (parseMarkdown, renderBlocks) where
 import qualified Data.Map as M
+import Control.Monad.State
 import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol)
 import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
@@ -47,7 +48,7 @@ import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
 import Control.Monad
 import Control.Applicative hiding ((<|>),many,optional,empty)
-import Text.Parsec hiding (sepBy1)
+import Text.Parsec hiding (sepBy1, State)
 import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
@@ -139,12 +140,85 @@ startingState = ParserState{
 
 
 -----
+-- TODO eventually we won't need this:
 type P = GenParser ParserState
 
+-- A scanner tries to match something at the beginning of a text,
+-- returning Just the remaining text if it matches, Nothing otherwise.
+type Scanner = Text -> Maybe Text
+
+applyScanners :: [Scanner] -> Text -> Maybe Text
+applyScanners [] t = Just t
+applyScanners (s:ss) t = case s t of
+                              Just t' -> applyScanners ss t'
+                              Nothing -> Nothing
+
+data BlockParserState = BlockParserState{
+          inputLines    :: [Text]
+        , references    :: ReferenceMap
+        , lineScanners  :: [Scanner]
+        , blockScanners :: [Scanner]
+        }
+
+type BlockParser = State BlockParserState
+
+-- Apply scanners to next line, and return result if they match.
+-- Skip over empty lines if blockStart.
+nextLine :: Bool -> BlockParser (Maybe Text)
+nextLine blockStart = do
+  lns <- gets inputLines
+  scanners <- gets $ if blockStart then blockScanners else lineScanners
+  case lns of
+       []     -> return Nothing
+       (x:xs) | isEmptyLine x && blockStart -> nextLine blockStart
+              | otherwise     -> do
+                  case applyScanners scanners x of
+                       Just x' -> do
+                          modify $ \st -> st{ inputLines = xs }
+                          return $ Just x'
+                       Nothing -> return Nothing
+
 parseBlocks :: Text -> (Blocks, ReferenceMap)
-parseBlocks = undefined
+parseBlocks t = (bs, references s)
+  where (bs, s) = runState blocksParser
+                    BlockParserState{ inputLines = T.lines t
+                                    , references = M.empty
+                                    , lineScanners = []
+                                    , blockScanners = []
+                                    }
+
+isEmptyLine :: Text -> Bool
+isEmptyLine = T.all isSpChar
+  where isSpChar ' '  = True
+        isSpChar '\t' = True
+        isSpChar _    = False
+
+blocksParser :: BlockParser Blocks
+blocksParser = nextLine True >>= maybe (return empty) doLine
+ where doLine = tryScanners
+                [ (blockquoteStart, blockquoteParser)
+                ]
+       tryScanners [] ln = linesParser ln
+       tryScanners ((s,p):rest) ln = case s ln of
+                                          Just ln' -> p ln'
+                                          Nothing  -> tryScanners rest ln
 
 
+blockquoteParser :: Text -> BlockParser Blocks
+blockquoteParser = undefined
+
+blockquoteStart :: Scanner
+blockquoteStart = return Nothing -- TODO
+
+linesParser :: Text -> BlockParser Blocks
+linesParser ln = do
+  rest <- getLines
+  return $ processLines (ln:rest)
+ where getLines = nextLine False >>=
+                    maybe (return []) (\next -> (next:) <$> getLines)
+       processLines ls = singleton $ Para $ singleton $ Markdown $ T.unlines ls
+
+  
 {-
  
 
