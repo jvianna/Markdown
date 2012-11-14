@@ -52,32 +52,26 @@ QUESTIONS
 
 module Markdown (parseMarkdown, renderBlocks) where
 import qualified Data.Map as M
-import Data.List (partition, intercalate)
+import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol)
 import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
 import Control.Monad
 import Control.Applicative hiding ((<|>),many,optional,empty)
-import Text.Parsec hiding (sepBy, sepBy1)
+import Text.Parsec hiding (sepBy1)
 import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
 
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Data.Text ( Text )
 
 -- for HTML rendering
 import qualified Text.Blaze.XHtml5 as H
 import qualified Text.Blaze.Html5.Attributes as A
-import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
 import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
-import qualified Data.ByteString.Lazy as BL
-
--- for main loop
-import System.Environment (getArgs)
 
 -- for debugging
 -- import Debug.Trace
@@ -89,9 +83,6 @@ sepBy1 p sep = do
   first <- p
   rest <- many $ try $ sep >> p
   return (first:rest)
-
-sepBy :: P a -> P b -> P [a]
-sepBy p sep = sepBy1 p sep <|> return []
 
 -- Structured representation of a document.
 
@@ -621,12 +612,6 @@ pListStart (Numbered w _) = try $ do
         Numbered w' _ | w == w' -> return ()
         _                       -> fail "Change in list style"
 
-pSetextHeaderLine :: P Int
-pSetextHeaderLine = try $ do
-  n <- (1 <$ skipMany1 (char '=')) <|> (2 <$ skipMany1 (char '-'))
-  pBlankline
-  return n
-
 pAtxHeaderStart :: P Int
 pAtxHeaderStart = length <$> try (many1 (char '#') <* pSpaceChar)
 
@@ -675,7 +660,7 @@ pStr = do
   return $ singleton . Str . T.pack $ first:rest
 
 pSym :: P Inlines
-pSym = singleton . Str . T.singleton <$> pNonspaceChar
+pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
 
 pUri :: P Inlines
 pUri = do

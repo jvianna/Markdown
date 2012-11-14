@@ -5,7 +5,7 @@ import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
 import System.Environment
 import Data.List (partition)
 import Data.Text (Text)
-import qualified Data.ByteString.Lazy.Char8 as BL
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text.IO as T
 import qualified Data.Text as T
 

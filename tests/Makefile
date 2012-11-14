@@ -1,6 +1,6 @@
 TESTS=$(wildcard *.markdown */*.markdown)
 ACTUALS=$(patsubst %.markdown,%.actual.html,$(TESTS))
-PROG ?= ../Markdown
+PROG ?= ../bin/markdown
 
 all: $(ACTUALS)
 	for f in $(ACTUALS); do \
