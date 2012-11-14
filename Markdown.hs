@@ -66,7 +66,7 @@ import Text.Blaze.Html hiding(contents)
 
 -- Replacement for Parsec's 'sepBy1', which does not have the @try@
 -- and so does not behave as I want it to.
-sepBy1 :: P a -> P b -> P [a]
+sepBy1 :: Parsec s u a -> Parsec s u b -> Parsec s u [a]
 sepBy1 p sep = do
   first <- p
   rest <- many $ try $ sep >> p
