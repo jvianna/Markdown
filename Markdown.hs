@@ -50,7 +50,7 @@ QUESTIONS
 
 -}
 
-module Main where
+module Markdown (parseMarkdown, renderBlocks) where
 import qualified Data.Map as M
 import Data.List (partition, intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol)
@@ -860,23 +860,4 @@ renderInlines = foldMap renderInline
                                         ! A.title (toValue e)
                                         $ toHtml t
 
-convert :: [String] -> Text -> IO ()
-convert opts t = case parseMarkdown t of
-                       Left e   -> error (show e)
-                       Right r  -> render r
-    where render = if "-n" `elem` opts
-                      then print
-                      else BL.putStr . renderHtml . renderBlocks
-
--- main loop
-
-main :: IO ()
-main = do
-  args <- getArgs
-  let isOpt ('-':_) = True
-      isOpt _       = False
-  let (opts, files) = partition isOpt args
-  case files of
-       [] -> T.getContents >>= convert opts
-       _  -> mapM T.readFile files >>= convert opts . joinLines
 
