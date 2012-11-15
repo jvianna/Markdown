@@ -63,7 +63,7 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
--- import Debug.Trace
+import Debug.Trace
 
 -- Replacement for Parsec's 'sepBy1', which does not have the @try@
 -- and so does not behave as I want it to.
@@ -168,9 +168,38 @@ scanChar c t = case T.uncons t of
                     Just (c',t') | c == c' -> Just t'
                     _ -> Nothing
 
+scanBlankline :: Scanner
+scanBlankline t = if isEmptyLine t then Just t else Nothing
+
+scanIndentSpaces :: Scanner
+scanIndentSpaces t =
+  case T.uncons t of
+       Just ('\t',t') -> Just t'
+       Just (' ',t')  ->
+         case T.uncons t' of
+              Just ('\t',t'') -> Just t''
+              Just (' ',t'')  ->
+                   case T.uncons t'' of
+                        Just ('\t',t''') -> Just t'''
+                        Just (' ',t''')  ->
+                             case T.uncons t''' of
+                                  Just (' ',t'''')  -> Just t''''
+                                  Just ('\t',t'''') -> Just t''''
+                                  _                 -> Nothing
+                        _                -> Nothing
+              _               -> Nothing
+       _              -> Nothing
+
+-- optional
 opt :: Scanner -> Scanner
 opt s t = case s t of
                Just t' -> Just t'
+               Nothing -> Just t
+
+-- not followed by
+nfb :: Scanner -> Scanner
+nfb s t = case s t of
+               Just _  -> Nothing
                Nothing -> Just t
 
 data BlockParserState = BlockParserState{
@@ -216,7 +245,9 @@ nextLine onSuccess scanType = do
   case lns of
        []     -> return Nothing
        (x:xs)
-         | isEmptyLine x && scanType == BlockScan -> nextLine onSuccess scanType
+         | isEmptyLine x && scanType == BlockScan -> do
+                  modify $ \st -> st{ inputLines = xs }
+                  nextLine onSuccess scanType
          | otherwise     -> do
                   case applyScanners scanners x of
                        Just x' -> do
@@ -242,29 +273,38 @@ isEmptyLine = T.all isSpChar
 
 blocksParser :: BlockParser Blocks
 blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
- where doLine = tryScanners
-                [ (scanBlockquoteStart, blockquoteParser)
-                ]
-       tryScanners [] ln = linesParser ln
+ where doLine ln  = do
+          next <- tryScanners
+                    [ (scanBlockquoteStart, blockquoteParser)
+                    ] ln
+          rest <- blocksParser
+          return (next <> rest)
+       tryScanners [] _            = linesParser
        tryScanners ((s,p):rest) ln = case s ln of
                                           Just _  -> p
                                           Nothing -> tryScanners rest ln
 
 blockquoteParser :: BlockParser Blocks
-blockquoteParser = do
-  bls <- withLineScanner (opt scanBlockquoteStart)
-         $ withBlockScanner scanBlockquoteStart
-           $ blocksParser
-  return $ singleton $ Blockquote bls
+blockquoteParser = singleton . Blockquote <$>
+  (withLineScanner (opt scanBlockquoteStart)
+    $ withBlockScanner scanBlockquoteStart
+        $ blocksParser)
 
-linesParser :: Text -> BlockParser Blocks
-linesParser ln = do
-  rest <- getLines
-  return $ processLines (ln:rest)
+linesParser :: BlockParser Blocks
+linesParser = do
+  next <- nextLine Consume BlockScan
+  lns <- maybe (return [])
+              (\x -> (x:) <$> (withLineScanner paraLine getLines)) next
+  return $ processLines lns
  where getLines = nextLine Consume LineScan >>=
-                    maybe (return []) (\next -> (next:) <$> getLines)
-       processLines ls = singleton $ Para $ singleton $ Markdown $ T.unlines ls
-
+                    maybe (return []) (\x -> (x:) <$> getLines)
+       processLines ls = singleton $ Para $ singleton $ Markdown $ joinLines ls
+       paraLine =  nfb scanBlankline
+               >=> nfb scanIndentSpaces
+               >=> nfb scanBlockquoteStart
+               -- TODO >=> nfb scanAtxHeaderStart
+               -- >=> nfb (scanSpaces >=> scanListMarker)
+               -- >=> nfb scanCodeFenceLine
 
 
 {-
