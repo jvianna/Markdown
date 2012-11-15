@@ -14,4 +14,4 @@ all: $(ACTUALS)
 .PHONY: all clean
 
 clean:
-	-rm $(ACTUALS)
+	-@rm $(ACTUALS)
