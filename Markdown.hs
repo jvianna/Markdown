@@ -47,14 +47,16 @@ import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
 import Control.Monad
-import Control.Applicative hiding ((<|>),many,optional,empty)
-import Text.Parsec hiding (sepBy1, State)
+import Control.Applicative hiding (many,optional,empty)
+import Text.Parsec hiding (sepBy1, State, (<|>))
 import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
 
 import qualified Data.Text as T
 import Data.Text ( Text )
+
+import qualified Data.Attoparsec.Text as A
 
 -- for HTML rendering
 import qualified Text.Blaze.XHtml5 as H
@@ -143,64 +145,50 @@ startingState = ParserState{
 -- TODO eventually we won't need this:
 type P = GenParser ParserState
 
--- A scanner tries to match something at the beginning of a text,
--- returning Just the remaining text if it matches, Nothing otherwise.
-type Scanner = Text -> Maybe Text
+type Scanner = A.Parser ()
 
+-- Try to match the scanner, returning Just the remaining text if
+-- it matches, Nothing otherwise.
 applyScanners :: [Scanner] -> Text -> Maybe Text
-applyScanners [] t = Just t
-applyScanners (s:ss) t = case s t of
-                              Just t' -> applyScanners ss t'
-                              Nothing -> Nothing
+applyScanners scanners t = case A.parse (sequence_ scanners) t of
+                                A.Done t' () -> Just t'
+                                _            -> Nothing
 
 -- Scanners
 
 scanBlockquoteStart :: Scanner
 scanBlockquoteStart =
-  scanNonindentSpaces >=> scanChar '>' >=> opt (scanChar ' ')
+  scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
-  opt (scanChar ' ') >=> opt (scanChar ' ') >=> opt (scanChar ' ')
+  opt (scanChar ' ') >> opt (scanChar ' ') >> opt (scanChar ' ')
 
 scanChar :: Char -> Scanner
-scanChar c t = case T.uncons t of
-                    Just (c',t') | c == c' -> Just t'
-                    _ -> Nothing
+scanChar c = A.char c >> return ()
 
 scanBlankline :: Scanner
-scanBlankline t = if isEmptyLine t then Just t else Nothing
+scanBlankline = A.skipMany spacechar >> A.endOfInput
+
+spacechar :: Scanner
+spacechar = () <$ A.satisfy (\c -> c == ' ' || c == '\t')
 
 scanIndentSpaces :: Scanner
-scanIndentSpaces t =
-  case T.uncons t of
-       Just ('\t',t') -> Just t'
-       Just (' ',t')  ->
-         case T.uncons t' of
-              Just ('\t',t'') -> Just t''
-              Just (' ',t'')  ->
-                   case T.uncons t'' of
-                        Just ('\t',t''') -> Just t'''
-                        Just (' ',t''')  ->
-                             case T.uncons t''' of
-                                  Just (' ',t'''')  -> Just t''''
-                                  Just ('\t',t'''') -> Just t''''
-                                  _                 -> Nothing
-                        _                -> Nothing
-              _               -> Nothing
-       _              -> Nothing
+scanIndentSpaces =
+  scanChar '\t'
+  <|> (scanChar ' ' >>
+       (scanChar '\t' <|>
+        (scanChar ' ' >>
+         (scanChar '\t' <|>
+           (scanChar ' ' >> spacechar)))))
 
 -- optional
 opt :: Scanner -> Scanner
-opt s t = case s t of
-               Just t' -> Just t'
-               Nothing -> Just t
+opt s = A.option () (s >> return ())
 
 -- not followed by
 nfb :: Scanner -> Scanner
-nfb s t = case s t of
-               Just _  -> Nothing
-               Nothing -> Just t
+nfb s = (s >> mzero) <|> return ()
 
 data BlockParserState = BlockParserState{
           inputLines    :: [Text]
@@ -280,7 +268,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
           rest <- blocksParser
           return (next <> rest)
        tryScanners [] _            = linesParser
-       tryScanners ((s,p):rest) ln = case s ln of
+       tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
                                           Just _  -> p
                                           Nothing -> tryScanners rest ln
 
@@ -300,11 +288,11 @@ linesParser = do
                     maybe (return []) (\x -> (x:) <$> getLines)
        processLines ls = singleton $ Para $ singleton $ Markdown $ joinLines ls
        paraLine =  nfb scanBlankline
-               >=> nfb scanIndentSpaces
-               >=> nfb scanBlockquoteStart
-               -- TODO >=> nfb scanAtxHeaderStart
-               -- >=> nfb (scanSpaces >=> scanListMarker)
-               -- >=> nfb scanCodeFenceLine
+                >> nfb scanIndentSpaces
+                >> nfb scanBlockquoteStart
+               -- TODO >> nfb scanAtxHeaderStart
+               -- >> nfb (scanSpaces >> scanListMarker)
+               -- >> nfb scanCodeFenceLine
 
 
 {-
