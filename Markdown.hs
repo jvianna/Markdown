@@ -38,7 +38,7 @@ QUESTIONS
 
 -}
 
-module Markdown (parseMarkdown, renderBlocks) where
+module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.List (intercalate)
@@ -196,7 +196,7 @@ isEmptyLine = T.all isSpChar
 blocksParser :: BlockParser Blocks
 blocksParser = nextLine True >>= maybe (return empty) doLine
  where doLine = tryScanners
-                [ (blockquoteStart, blockquoteParser)
+                [ (scanBlockquoteStart, blockquoteParser)
                 ]
        tryScanners [] ln = linesParser ln
        tryScanners ((s,p):rest) ln = case s ln of
@@ -207,8 +207,23 @@ blocksParser = nextLine True >>= maybe (return empty) doLine
 blockquoteParser :: Text -> BlockParser Blocks
 blockquoteParser = undefined
 
-blockquoteStart :: Scanner
-blockquoteStart = return Nothing -- TODO
+scanBlockquoteStart :: Scanner
+scanBlockquoteStart =
+  scanNonindentSpaces >=> scanChar '>' >=> opt (scanChar ' ')
+
+scanNonindentSpaces :: Scanner
+scanNonindentSpaces =
+  opt (scanChar ' ') >=> opt (scanChar ' ') >=> opt (scanChar ' ')
+
+scanChar :: Char -> Scanner
+scanChar c t = case T.uncons t of
+                    Just (c',t') | c == c' -> Just t'
+                    _ -> Nothing
+
+opt :: Scanner -> Scanner
+opt s t = case s t of
+               Just t' -> Just t'
+               Nothing -> Just t
 
 linesParser :: Text -> BlockParser Blocks
 linesParser ln = do
