@@ -153,59 +153,7 @@ applyScanners (s:ss) t = case s t of
                               Just t' -> applyScanners ss t'
                               Nothing -> Nothing
 
-data BlockParserState = BlockParserState{
-          inputLines    :: [Text]
-        , references    :: ReferenceMap
-        , lineScanners  :: [Scanner]
-        , blockScanners :: [Scanner]
-        }
-
-type BlockParser = State BlockParserState
-
--- Apply scanners to next line, and return result if they match.
--- Skip over empty lines if blockStart.
-nextLine :: Bool -> BlockParser (Maybe Text)
-nextLine blockStart = do
-  lns <- gets inputLines
-  scanners <- gets $ if blockStart then blockScanners else lineScanners
-  case lns of
-       []     -> return Nothing
-       (x:xs) | isEmptyLine x && blockStart -> nextLine blockStart
-              | otherwise     -> do
-                  case applyScanners scanners x of
-                       Just x' -> do
-                          modify $ \st -> st{ inputLines = xs }
-                          return $ Just x'
-                       Nothing -> return Nothing
-
-parseBlocks :: Text -> (Blocks, ReferenceMap)
-parseBlocks t = (bs, references s)
-  where (bs, s) = runState blocksParser
-                    BlockParserState{ inputLines = T.lines t
-                                    , references = M.empty
-                                    , lineScanners = []
-                                    , blockScanners = []
-                                    }
-
-isEmptyLine :: Text -> Bool
-isEmptyLine = T.all isSpChar
-  where isSpChar ' '  = True
-        isSpChar '\t' = True
-        isSpChar _    = False
-
-blocksParser :: BlockParser Blocks
-blocksParser = nextLine True >>= maybe (return empty) doLine
- where doLine = tryScanners
-                [ (scanBlockquoteStart, blockquoteParser)
-                ]
-       tryScanners [] ln = linesParser ln
-       tryScanners ((s,p):rest) ln = case s ln of
-                                          Just _  -> p ln
-                                          Nothing -> tryScanners rest ln
-
-
-blockquoteParser :: Text -> BlockParser Blocks
-blockquoteParser = undefined
+-- Scanners
 
 scanBlockquoteStart :: Scanner
 scanBlockquoteStart =
@@ -225,15 +173,100 @@ opt s t = case s t of
                Just t' -> Just t'
                Nothing -> Just t
 
+data BlockParserState = BlockParserState{
+          inputLines    :: [Text]
+        , references    :: ReferenceMap
+        , lineScanners  :: [Scanner]
+        , blockScanners :: [Scanner]
+        }
+
+type BlockParser = State BlockParserState
+
+-- Add a scanner to the line scanner stack and run a parser,
+-- then pop the scanner.
+withLineScanner :: Scanner -> BlockParser a -> BlockParser a
+withLineScanner scanner parser = do
+  scanners <- gets lineScanners
+  modify $ \st -> st{ lineScanners = scanners ++ [scanner] }
+  result <- parser
+  modify $ \st -> st{ lineScanners = scanners }
+  return result
+
+-- Add a scanner to the block scanner stack and run a parser,
+-- then pop the scanner.
+withBlockScanner :: Scanner -> BlockParser a -> BlockParser a
+withBlockScanner scanner parser = do
+  scanners <- gets blockScanners
+  modify $ \st -> st{ blockScanners = scanners ++ [scanner] }
+  result <- parser
+  modify $ \st -> st{ blockScanners = scanners }
+  return result
+
+data ScanType  = BlockScan | LineScan deriving Eq
+data OnSuccess = Peek | Consume deriving Eq
+
+-- Apply scanners to next line, and return result if they match.
+-- Skip over empty lines if blockStart.
+nextLine :: OnSuccess -> ScanType -> BlockParser (Maybe Text)
+nextLine onSuccess scanType = do
+  lns <- gets inputLines
+  scanners <- gets $ case scanType of
+                           BlockScan -> blockScanners
+                           LineScan  -> lineScanners
+  case lns of
+       []     -> return Nothing
+       (x:xs)
+         | isEmptyLine x && scanType == BlockScan -> nextLine onSuccess scanType
+         | otherwise     -> do
+                  case applyScanners scanners x of
+                       Just x' -> do
+                          when (onSuccess == Consume) $
+                            modify $ \st -> st{ inputLines = xs }
+                          return $ Just x'
+                       Nothing -> return Nothing
+
+parseBlocks :: Text -> (Blocks, ReferenceMap)
+parseBlocks t = (bs, references s)
+  where (bs, s) = runState blocksParser
+                    BlockParserState{ inputLines = T.lines t
+                                    , references = M.empty
+                                    , lineScanners = []
+                                    , blockScanners = []
+                                    }
+
+isEmptyLine :: Text -> Bool
+isEmptyLine = T.all isSpChar
+  where isSpChar ' '  = True
+        isSpChar '\t' = True
+        isSpChar _    = False
+
+blocksParser :: BlockParser Blocks
+blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
+ where doLine = tryScanners
+                [ (scanBlockquoteStart, blockquoteParser)
+                ]
+       tryScanners [] ln = linesParser ln
+       tryScanners ((s,p):rest) ln = case s ln of
+                                          Just _  -> p
+                                          Nothing -> tryScanners rest ln
+
+blockquoteParser :: BlockParser Blocks
+blockquoteParser = do
+  bls <- withLineScanner (opt scanBlockquoteStart)
+         $ withBlockScanner scanBlockquoteStart
+           $ blocksParser
+  return $ singleton $ Blockquote bls
+
 linesParser :: Text -> BlockParser Blocks
 linesParser ln = do
   rest <- getLines
   return $ processLines (ln:rest)
- where getLines = nextLine False >>=
+ where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\next -> (next:) <$> getLines)
        processLines ls = singleton $ Para $ singleton $ Markdown $ T.unlines ls
 
-  
+
+
 {-
  
 
