@@ -200,8 +200,8 @@ blocksParser = nextLine True >>= maybe (return empty) doLine
                 ]
        tryScanners [] ln = linesParser ln
        tryScanners ((s,p):rest) ln = case s ln of
-                                          Just ln' -> p ln'
-                                          Nothing  -> tryScanners rest ln
+                                          Just _  -> p ln
+                                          Nothing -> tryScanners rest ln
 
 
 blockquoteParser :: Text -> BlockParser Blocks
