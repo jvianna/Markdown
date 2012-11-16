@@ -654,10 +654,11 @@ pInline :: ReferenceMap -> A.Parser Inlines
 pInline refmap =
            pSpace
        <|> pStr
+       <|> pEnclosure refmap
        -- <|> pStrong '*' refmap
        -- <|> pStrong '_' refmap
-       <|> pEmph '*' refmap
-       <|> pEmph '_' refmap
+       -- <|> pEmph '*' refmap
+       -- <|> pEmph '_' refmap
        -- <|> pLink refmap
        -- <|> pImage refmap
        -- <|> pCode
@@ -719,6 +720,35 @@ pUri protocol = do
                              (T.pack $ show uri') (T.empty)
        Nothing   -> fail "not a URI"
 
+isEnclosureChar :: Char -> Bool
+isEnclosureChar '*' = True
+isEnclosureChar '_' = True
+isEnclosureChar _   = False
+
+pEnclosure :: ReferenceMap -> A.Parser Inlines
+pEnclosure refmap = do
+  c <- A.satisfy isEnclosureChar
+  (A.char c >> ((A.char c >> pThree c refmap) <|> pTwo c refmap))
+    <|> pOne c refmap
+
+pOne :: Char -> ReferenceMap -> A.Parser Inlines
+pOne c refmap = undefined
+-- parse inlines til you hit c nfb c.
+-- if you never do, emit fallback.
+
+pTwo :: Char -> ReferenceMap -> A.Parser Inlines
+pTwo c refmap = undefined
+-- parse inlines til you hit cc.
+-- if you never do, emit fallback.
+
+pThree :: Char -> ReferenceMap -> A.Parser Inlines
+pThree c refmap = undefined
+-- parse inlines til you hit c or cc.  if
+-- c, then emit Emph and then call pTwo.
+-- if cc, then emit Strong and then call pOne.
+
+{-
+
 pEmph :: Char -> ReferenceMap -> A.Parser Inlines
 pEmph c refmap = do
   A.char c
@@ -733,8 +763,6 @@ pEmph c refmap = do
 --  then we can omit the try in pStrong?
 
 pStrong _ _ = mzero
-
-{-
 
 
 pStrong :: Char -> P Inlines
