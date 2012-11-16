@@ -357,6 +357,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                     [ (scanBlockquoteStart, parseBlockquote)
                     , ((scanIndentSpace >> nfb scanBlankline),
                         parseIndentedCodeBlock)
+                    , (scanAtxHeaderStart, parseAtxHeader)
                     , (scanCodeFenceLine, parseCodeFence)
                     ] ln
           rest <- blocksParser
@@ -379,6 +380,22 @@ parseIndentedCodeBlock =
      . reverse . dropWhile T.null . reverse <$> getLines
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
+
+parseAtxHeader :: BlockParser Blocks
+parseAtxHeader = do
+  next <- maybe "" id <$> nextLine Consume BlockScan
+  case A.parseOnly parseAtxHeaderStart next of
+        Left _  -> return $ singleton $ Para $ singleton $ Str next
+        Right lev -> return
+                     $ singleton . Header lev . singleton . Markdown
+                     $ stripClosingHashes next
+   where stripClosingHashes = T.reverse . stripLeadingHashes . T.reverse
+         stripLeadingHashes ln = case T.uncons ln of
+                                      Just ('#',rest)
+                                        | "\\" `T.isPrefixOf` rest -> ln
+                                           -- escaped \#
+                                        | otherwise -> stripLeadingHashes rest
+                                      _ -> ln
 
 parseCodeFence :: BlockParser Blocks
 parseCodeFence = do
