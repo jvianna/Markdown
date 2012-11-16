@@ -4,8 +4,7 @@
 
 TODO
 
-_ explore a line-based approach?
-  maybe don't need parser combinators, except for the scanners?
+_ how are we going to get the refmap in the inline parsers???
 
 QUESTIONS
 
