@@ -161,6 +161,17 @@ scanBlockquoteStart :: Scanner
 scanBlockquoteStart =
   scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
+scanIndentSpace :: Scanner
+scanIndentSpace =
+  scanChar '\t' <|>
+    A.try (scanChar ' ' >>
+      (scanChar '\t' <|>
+        A.try (scanChar ' ' >>
+          (scanChar '\t' <|>
+            A.try (scanChar ' ' >>
+              (scanChar '\t' <|>
+                scanChar ' '))))))
+
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
   (scanChar ' ' >>
@@ -186,15 +197,6 @@ isSpaceOrTab :: Char -> Bool
 isSpaceOrTab ' '  = True
 isSpaceOrTab '\t' = True
 isSpaceOrTab _    = False
-
-scanIndentSpaces :: Scanner
-scanIndentSpaces =
-  scanChar '\t'
-  <|> (scanChar ' ' >>
-       (scanChar '\t' <|>
-        (scanChar ' ' >>
-         (scanChar '\t' <|>
-           (scanChar ' ' >> scanSpace)))))
 
 -- optional
 opt :: Scanner -> Scanner
@@ -353,6 +355,8 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
  where doLine ln  = do
           next <- tryScanners
                     [ (scanBlockquoteStart, parseBlockquote)
+                    , ((scanIndentSpace >> nfb scanBlankline),
+                        parseIndentedCodeBlock)
                     , (scanCodeFenceLine, parseCodeFence)
                     ] ln
           rest <- blocksParser
@@ -368,6 +372,14 @@ parseBlockquote = singleton . Blockquote <$>
     $ withBlockScanner scanBlockquoteStart
         $ blocksParser)
 
+parseIndentedCodeBlock :: BlockParser Blocks
+parseIndentedCodeBlock =
+  withLineScanner (scanIndentSpace <|> scanBlankline) $
+  singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
+     . reverse . dropWhile T.null . reverse <$> getLines
+ where getLines = nextLine Consume LineScan >>=
+                    maybe (return []) (\ln -> (ln:) <$> getLines)
+
 parseCodeFence :: BlockParser Blocks
 parseCodeFence = do
   next <- maybe "" id <$> nextLine Consume BlockScan
@@ -375,7 +387,7 @@ parseCodeFence = do
        Left _  -> return $ singleton $ Para $ singleton $ Str next
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
-          . joinLines . reverse <$> getLines fence
+          . T.unlines . reverse <$> getLines fence
    where getLines fence = do
            mbln <- nextLine Consume BlockScan
            case mbln of
@@ -398,7 +410,7 @@ parseLines = do
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        paraLine =   nfb scanBlankline
-                 >> nfb scanIndentSpaces
+                 >> nfb scanIndentSpace
                  >> nfb scanBlockquoteStart
                  >> nfb scanAtxHeaderStart
                  >> nfb scanCodeFenceLine
