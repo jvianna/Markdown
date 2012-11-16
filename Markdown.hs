@@ -119,33 +119,6 @@ data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
 
 type ReferenceMap = M.Map Text (Text, Text)
 
-addLinkReference :: Text -> (Text, Text) -> P ()
-addLinkReference key (url,tit) = updateState $ \st ->
-  st{ linkReferences = M.insert (T.toUpper key) (url,tit) (linkReferences st) }
-
-lookupLinkReference :: Text -> P (Maybe (Text, Text))
-lookupLinkReference key = do
-  refmap <- linkReferences <$> getState
-  return $ M.lookup (T.toUpper key) refmap
-
-data ParserState = ParserState{
-         beginLineScanners  :: [P ()]
-       , beginBlockScanners :: [P ()]
-       , linkReferences     :: ReferenceMap
-       }
-
-startingState :: ParserState
-startingState = ParserState{
-         beginLineScanners = []
-       , beginBlockScanners = []
-       , linkReferences = M.empty
-       }
-
-
------
--- TODO eventually we won't need this:
-type P = GenParser ParserState
-
 type Scanner = A.Parser ()
 
 -- Try to match the scanner, returning Just the remaining text if
