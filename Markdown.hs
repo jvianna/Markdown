@@ -632,20 +632,6 @@ pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
 {-
 -- Block-level parsers.
 
-pDoc :: P Blocks
-pDoc = pBlocks (return ()) (return ()) <* skipMany pBlankline <* eof
-
-pBlock :: P Blocks
-pBlock = pBlockquote
-     <|> pAtxHeader
-     <|> pHrule
-     <|> pList
-     <|> pCodeFence
-     <|> pCodeBlock
-     <|> pReference
-     <|> pHtmlBlock
-     <|> pPara
-
 pInBalancedTags :: P Text
 pInBalancedTags = try $ do
   (tagtype, opener) <- pHtmlTag
@@ -716,35 +702,6 @@ pList = try $ do
   rest <- many listItem
   let isTight' = if null rest then True else isTight
   return $ singleton $ List isTight' listType (first:rest)
-
-pListMarker :: P ListType
-pListMarker = pBullet <|> pListNumber
-
-pBullet :: P ListType
-pBullet = Bullet <$> oneOf "*+-" <* (pSpaceChar <|> lookAhead newline)
-
-pListNumber :: P ListType
-pListNumber =
-  (pListNumberDig <|> pListNumberPar) <* (pSpaceChar <|> lookAhead newline)
-  where pListNumberDig = try $ do
-           num <- read <$> many1 digit
-           wrap <-  PeriodFollowing <$ char '.'
-                <|> ParenFollowing <$ char ')'
-           return $ Numbered wrap num
-        pListNumberPar = try $ do
-           char '('
-           num <- read <$> many1 digit
-           char ')'
-           return $ Numbered ParensAround num
-
-pListStart :: ListType -> P ()
-pListStart (Bullet   c) = () <$ notFollowedBy pHruleLine <* char c <* pSpaceChar
-pListStart (Numbered w _) = try $ do
-  marker <- pListNumber
-  case marker of
-        Numbered w' _ | w == w' -> return ()
-        _                       -> fail "Change in list style"
-
 
 -}
 
