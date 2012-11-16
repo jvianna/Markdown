@@ -40,6 +40,7 @@ QUESTIONS
 
 module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
+import qualified Data.Set as Set
 import Control.Monad.State
 import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
@@ -523,37 +524,6 @@ oneOfStrings strs = do
        z | "" `elem` z -> return [c]
          | otherwise   -> (c:) <$> oneOfStrings strs'
 
--- | Parses a URI. Returns pair of original and URI-escaped version.
-uri :: A.Parser (Text, Text)
-uri = do
-  let protocols = [ "http:", "https:", "ftp:", "file:", "mailto:",
-                    "news:", "telnet:" ]
-  protocol <- oneOfStrings protocols
-  -- Scan non-ascii characters and ascii characters allowed in a URI.
-  -- We allow punctuation except when followed by a space, since
-  -- we don't want the trailing '.' in 'http://google.com.'
-  let isUriChar c = not (isPunctuation c) &&
-                       (not (isAscii c) || isAllowedInURI c)
-  -- We want to allow
-  -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
-  -- as a URL, while NOT picking up the closing paren in
-  -- (http://wikipedia.org)
-  -- So we include balanced parens in the URL.
-  let inParens = A.try $ do A.char '('
-                            res <- A.takeWhile isUriChar
-                            A.char ')'
-                            return $ "(" <> res <> ")"
-  let innerPunct = T.singleton <$> A.try (A.char '/'
-        <|> (pSatisfy isPunctuation <* nfb A.space <* nfb A.endOfInput))
-  let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
-  rest <- T.concat <$> A.many1 uriChunk
-  -- now see if they amount to an absolute URI
-  let escapeURI = escapeURIString (not . isSpace)
-  let rawuri = protocol ++ T.unpack rest
-  case parseURI (escapeURI rawuri) of
-       Just uri' -> return (T.pack rawuri, T.pack $ show uri')
-       Nothing   -> fail "not a URI"
-
 {-
 
 -- | Parses an email address; returns original and corresponding
@@ -712,7 +682,6 @@ parseInlines refmap t =
 
 pInline :: A.Parser Inlines
 pInline =  pSpace
-       -- <|> pUri
        <|> pStr
        -- <|> pStrong '*'
        -- <|> pStrong '_'
@@ -735,19 +704,51 @@ pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
         pSpaceNewline = A.endOfLine >> scanSpaces >> return SoftBreak
 
 pStr :: A.Parser Inlines
-pStr = singleton . Str . T.intercalate "_" <$> strChunk `A.sepBy1` underscore
-  where strChunk = A.takeWhile1 isAlphaNum
-        underscore = A.string "_"
+pStr = do
+  let strChunk = A.takeWhile1 isAlphaNum
+  let underscore = A.string "_"
+  s <- T.intercalate "_" <$> strChunk `A.sepBy1` underscore
+  if s `Set.member` uriProtocols
+     then A.try (pUri s) <|> return (singleton $ Str s)
+     else return (singleton $ Str s)
 
 pSym :: A.Parser Inlines
 pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
 
-{-
+uriProtocols :: Set.Set Text
+uriProtocols = Set.fromList
+  [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
 
-pUri :: P Inlines
-pUri = do
-  (orig,escaped) <- uri
-  return $ singleton $ Link (singleton $ Str orig) escaped (T.empty)
+pUri :: Text -> A.Parser Inlines
+pUri protocol = do
+  A.char ':'
+  -- Scan non-ascii characters and ascii characters allowed in a URI.
+  -- We allow punctuation except when followed by a space, since
+  -- we don't want the trailing '.' in 'http://google.com.'
+  let isUriChar c = not (isPunctuation c) &&
+                       (not (isAscii c) || isAllowedInURI c)
+  -- We want to allow
+  -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
+  -- as a URL, while NOT picking up the closing paren in
+  -- (http://wikipedia.org)
+  -- So we include balanced parens in the URL.
+  let inParens = A.try $ do A.char '('
+                            res <- A.takeWhile isUriChar
+                            A.char ')'
+                            return $ "(" <> res <> ")"
+  let innerPunct = T.singleton <$> A.try (A.char '/'
+        <|> (pSatisfy isPunctuation <* nfb A.space <* nfb A.endOfInput))
+  let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
+  rest <- T.concat <$> A.many1 uriChunk
+  -- now see if they amount to an absolute URI
+  let escapeURI = escapeURIString (not . isSpace)
+  let rawuri = protocol <> ":" <> rest
+  case parseURI (escapeURI $ T.unpack rawuri) of
+       Just uri' -> return $ singleton $ Link (singleton $ Str rawuri)
+                             (T.pack $ show uri') (T.empty)
+       Nothing   -> fail "not a URI"
+
+{-
 
 pEmph :: Char -> P Inlines
 pEmph c = try $ do
