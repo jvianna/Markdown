@@ -278,6 +278,9 @@ parseListNumber =
            A.char ')'
            return $ Numbered ParensAround num
 
+scanReference :: Scanner
+scanReference = mzero -- TODO
+
 ---
 
 
@@ -359,6 +362,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                         parseIndentedCodeBlock)
                     , (scanAtxHeaderStart, parseAtxHeader)
                     , (scanCodeFenceLine, parseCodeFence)
+                    , (scanReference, parseReference)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
@@ -418,6 +422,22 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
   where lang = case T.words (T.strip t) of
                      []    -> Nothing
                      (l:_) -> Just l
+
+parseReference :: BlockParser Blocks
+parseReference = do
+  return empty -- TODO
+{-
+  pNonindentSpaces
+  lab <- pLinkLabel
+  char ':'
+  pSpnl
+  url <- pLinkUrl
+  tit <- option T.empty $ try $ pSpnl >> pLinkTitle
+  pBlankline
+  addLinkReference lab (url,tit)
+  return empty
+-}
+
 
 parseLines :: BlockParser Blocks
 parseLines = do
