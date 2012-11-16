@@ -729,6 +729,9 @@ pEmph c refmap = do
   (A.char c >> return (singleton (Emph contents)))
     <|> return (Str "*" <| contents)
 
+-- TODO parser for ***, which reads til either * or **
+--  then we can omit the try in pStrong?
+
 pStrong _ _ = mzero
 
 {-
