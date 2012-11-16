@@ -150,9 +150,10 @@ type Scanner = A.Parser ()
 -- Try to match the scanner, returning Just the remaining text if
 -- it matches, Nothing otherwise.
 applyScanners :: [Scanner] -> Text -> Maybe Text
-applyScanners scanners t = case A.parse (sequence_ scanners) t of
-                                A.Done t' () -> Just t'
-                                _            -> Nothing
+applyScanners scanners t =
+  case A.parseOnly (sequence_ scanners >> A.takeText) t of
+       Right t'   -> Just t'
+       Left e     -> Nothing
 
 -- Scanners
 
@@ -162,7 +163,11 @@ scanBlockquoteStart =
 
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
-  opt (scanChar ' ') >> opt (scanChar ' ') >> opt (scanChar ' ')
+  (scanChar ' ' >>
+    (scanChar ' ' >>
+      (scanChar ' ' <|> return ())
+    ) <|> return ()
+  ) <|> return ()
 
 scanChar :: Char -> Scanner
 scanChar c = A.char c >> return ()
@@ -196,7 +201,7 @@ opt :: Scanner -> Scanner
 opt s = A.option () (s >> return ())
 
 -- not followed by
-nfb :: Scanner -> Scanner
+nfb :: A.Parser a -> Scanner
 nfb s = do
   succeeded <- A.option False (True <$ s)
   if succeeded
@@ -211,6 +216,15 @@ parseAtxHeaderStart = do
 
 scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
+
+scanHRuleLine :: Scanner
+scanHRuleLine = A.try $ do
+  scanNonindentSpaces
+  c <- A.satisfy (\c -> c == '*' || c == '-' || c == '_')
+  A.count 2 $ A.try $ scanSpaces >> A.char c
+  A.skipWhile (\x -> isSpaceOrTab x || x == c)
+  A.endOfInput
+  return ()
 
 isCodeFenceChar :: Char -> Bool
 isCodeFenceChar '`' = True
@@ -236,18 +250,21 @@ isBulletChar '*' = True
 isBulletChar _   = False
 
 scanListMarker :: Scanner
-scanListMarker = parseListMarker *> scanSpace *> scanSpaces
+scanListMarker = () <$ parseListMarker
 
 parseListMarker :: A.Parser ListType
 parseListMarker = parseBullet <|> parseListNumber
 
 parseBullet :: A.Parser ListType
-parseBullet =
-  Bullet <$> A.satisfy isBulletChar
+parseBullet = do
+  c <- A.satisfy isBulletChar
+  scanSpace
+  nfb $ A.count 2 $ A.try $ scanSpaces >> A.char c -- hrule
+  return $ Bullet c
 
 parseListNumber :: A.Parser ListType
 parseListNumber =
-  parseListNumberDig <|> parseListNumberPar
+  (parseListNumberDig <|> parseListNumberPar) <* scanSpace <* scanSpaces
   where parseListNumberDig = A.try $ do
            num <- A.decimal
            wrap <-  PeriodFollowing <$ A.char '.'
@@ -353,18 +370,45 @@ blockquoteParser = singleton . Blockquote <$>
 linesParser :: BlockParser Blocks
 linesParser = do
   next <- nextLine Consume BlockScan
-  lns <- maybe (return [])
-              (\x -> (x:) <$> (withLineScanner paraLine getLines)) next
-  return $ processLines lns
+  processLines <$> maybe (return []) (\x ->
+                          (x:) <$> (withLineScanner paraLine getLines)) next
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
-       processLines ls = singleton $ Para $ singleton $ Markdown $ joinLines ls
        paraLine =   nfb scanBlankline
                  >> nfb scanIndentSpaces
                  >> nfb scanBlockquoteStart
                  >> nfb scanAtxHeaderStart
                  >> nfb scanCodeFenceLine
                  >> nfb (scanSpaces >> scanListMarker)
+       markdown = singleton . Markdown . T.strip
+       processLines [] = empty
+       processLines ws =
+         case break isSpecialLine ws of
+               (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
+               (xs,(y:ys))
+                 | isSetextLine y ->
+                     case reverse xs of
+                           []     -> Header (setextLevel y) empty
+                                     <| processLines ys
+                           [z]    -> Header (setextLevel y) (markdown z)
+                                     <| processLines ys
+                           (z:zs) -> Para (markdown $ joinLines $ reverse zs)
+                                  <| Header (setextLevel y) (markdown z)
+                                  <| processLines ys
+                 | isHruleLine y  ->
+                     case xs of
+                           []     -> HRule
+                                     <| processLines ys
+                           _      -> Para (markdown $ joinLines xs)
+                                     <| HRule
+                                     <| processLines ys
+                 | otherwise      -> error "Should not happen"
+       isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
+       isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
+       isSetextLine  x = isSetext1Line x || isSetext2Line x
+       setextLevel   x = if isSetext1Line x then 1 else 2
+       isHruleLine = maybe False (const True) . applyScanners [scanHRuleLine]
+       isSpecialLine x = isSetextLine x || isHruleLine x
 
 
 
