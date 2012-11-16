@@ -523,40 +523,38 @@ oneOfStrings strs = do
        z | "" `elem` z -> return [c]
          | otherwise   -> (c:) <$> oneOfStrings strs'
 
-{-
-
 -- | Parses a URI. Returns pair of original and URI-escaped version.
-uri :: P (Text, Text)
-uri = try $ do
+uri :: A.Parser (Text, Text)
+uri = do
   let protocols = [ "http:", "https:", "ftp:", "file:", "mailto:",
                     "news:", "telnet:" ]
-  lookAhead $ oneOfStrings protocols
+  protocol <- oneOfStrings protocols
   -- Scan non-ascii characters and ascii characters allowed in a URI.
   -- We allow punctuation except when followed by a space, since
   -- we don't want the trailing '.' in 'http://google.com.'
-  let innerPunct = try $ pSatisfy isPunctuation <*
-                         notFollowedBy (newline <|> pSpaceChar)
-  let uriChar = innerPunct <|>
-                pSatisfy (\c -> not (isPunctuation c) &&
-                            (not (isAscii c) || isAllowedInURI c))
+  let isUriChar c = not (isPunctuation c) &&
+                       (not (isAscii c) || isAllowedInURI c)
   -- We want to allow
   -- http://en.wikipedia.org/wiki/State_of_emergency_(disambiguation)
   -- as a URL, while NOT picking up the closing paren in
   -- (http://wikipedia.org)
   -- So we include balanced parens in the URL.
-  let inParens = try $ do char '('
-                          res <- many uriChar
-                          char ')'
-                          return $ '(' : res ++ ")"
-  str <- concat <$> many1 (inParens <|> count 1 (innerPunct <|> uriChar))
-  str' <- option str $ char '/' >> return (str ++ "/")
+  let inParens = A.try $ do A.char '('
+                            res <- A.takeWhile isUriChar
+                            A.char ')'
+                            return $ "(" <> res <> ")"
+  let innerPunct = T.singleton <$>
+         A.try (A.char '/' <|> (pSatisfy isPunctuation <* nfb A.space))
+  let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
+  rest <- T.concat <$> A.many1 uriChunk
   -- now see if they amount to an absolute URI
   let escapeURI = escapeURIString (not . isSpace)
-  case parseURI (escapeURI str') of
-       Just uri' -> if uriScheme uri' `elem` protocols
-                       then return (T.pack str', T.pack $ show uri')
-                       else fail "not a URI"
+  let rawuri = protocol ++ T.unpack rest
+  case parseURI (escapeURI rawuri) of
+       Just uri' -> return (T.pack rawuri, T.pack $ show uri')
        Nothing   -> fail "not a URI"
+
+{-
 
 -- | Parses an email address; returns original and corresponding
 -- escaped mailto: URI.
