@@ -737,7 +737,7 @@ pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
         pSpaceNewline = A.endOfLine >> scanSpaces >> return SoftBreak
 
 pStr :: A.Parser Inlines
-pStr = singleton . Str . T.concat <$> strChunk `A.sepBy1` underscore
+pStr = singleton . Str . T.intercalate "_" <$> strChunk `A.sepBy1` underscore
   where strChunk = A.takeWhile1 isAlphaNum
         underscore = A.string "_"
 
