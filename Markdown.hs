@@ -4,8 +4,6 @@
 
 TODO
 
-_ how are we going to get the refmap in the inline parsers???
-
 QUESTIONS
 
 * nested quotes in link title?  seems silly, but some impls do?
@@ -459,7 +457,7 @@ parseLines = do
 -- Utility parsers.
 
 joinLines :: [Text] -> Text
-joinLines = T.intercalate (T.pack "\n")
+joinLines = T.intercalate "\n"
 
 pEscapedChar :: A.Parser Char
 pEscapedChar = A.try $ A.char '\\' *> A.satisfy isEscapable
@@ -648,19 +646,20 @@ pList = try $ do
 
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
-  case A.parseOnly (msum <$> many pInline <* A.endOfInput) t of
+  case A.parseOnly (msum <$> many (pInline refmap) <* A.endOfInput) t of
        Left e   -> singleton $ Err (T.strip t) (T.pack $ show e)
        Right r  -> r
 
-pInline :: A.Parser Inlines
-pInline =  pSpace
+pInline :: ReferenceMap -> A.Parser Inlines
+pInline refmap =
+           pSpace
        <|> pStr
-       -- <|> pStrong '*'
-       -- <|> pStrong '_'
-       -- <|> pEmph '*'
-       -- <|> pEmph '_'
-       -- <|> pLink
-       -- <|> pImage
+       -- <|> pStrong '*' refmap
+       -- <|> pStrong '_' refmap
+       <|> pEmph '*' refmap
+       <|> pEmph '_' refmap
+       -- <|> pLink refmap
+       -- <|> pImage refmap
        -- <|> pCode
        -- <|> pEntity
        -- <|> pAutolink
@@ -720,16 +719,20 @@ pUri protocol = do
                              (T.pack $ show uri') (T.empty)
        Nothing   -> fail "not a URI"
 
+pEmph :: Char -> ReferenceMap -> A.Parser Inlines
+pEmph c refmap = do
+  A.char c
+  nfb A.space
+  contents <- msum <$>
+     A.many1 ( (nfb (A.char c) >> nfb A.endOfInput >> pInline refmap)
+            <|> pStrong c refmap)
+  (A.char c >> return (singleton (Emph contents)))
+    <|> return (Str "*" <| contents)
+
+pStrong _ _ = mzero
+
 {-
 
-pEmph :: Char -> P Inlines
-pEmph c = try $ do
-  char c
-  notFollowedBy pSpaceChar
-  contents <- msum <$>
-     many1 ( (try $ notFollowedBy (char c) >> pInline) <|> pStrong c )
-  (char c >> return (singleton (Emph contents)))
-    <|> return (Str (T.pack "*") <| contents)
 
 pStrong :: Char -> P Inlines
 pStrong c = try $ do
