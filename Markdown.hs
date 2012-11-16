@@ -730,9 +730,9 @@ pInline =  pSpace
 
 pSpace :: A.Parser Inlines
 pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
-  where pSpaceSpace = A.try $ scanSpace >>
+  where pSpaceSpace = scanSpace >>
             (pSpaceNewline <|> pSpaceLB <|> return Space)
-        pSpaceLB = A.try $ scanSpace >> scanSpaces >>
+        pSpaceLB = scanSpace >> scanSpaces >>
                       ((pSpaceNewline >> return LineBreak) <|> return Space)
         pSpaceNewline = A.endOfLine >> scanSpaces >> return SoftBreak
 
