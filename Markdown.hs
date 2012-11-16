@@ -543,8 +543,8 @@ uri = do
                             res <- A.takeWhile isUriChar
                             A.char ')'
                             return $ "(" <> res <> ")"
-  let innerPunct = T.singleton <$>
-         A.try (A.char '/' <|> (pSatisfy isPunctuation <* nfb A.space))
+  let innerPunct = T.singleton <$> A.try (A.char '/'
+        <|> (pSatisfy isPunctuation <* nfb A.space <* nfb A.endOfInput))
   let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
   rest <- T.concat <$> A.many1 uriChunk
   -- now see if they amount to an absolute URI
