@@ -203,8 +203,14 @@ nfb s = do
      then mzero
      else return ()
 
+parseAtxHeaderStart :: A.Parser Int
+parseAtxHeaderStart = do
+  hashes <- A.takeWhile1 (=='#')
+  scanSpace
+  return $ T.length hashes
+
 scanAtxHeaderStart :: Scanner
-scanAtxHeaderStart = A.char '#' *> A.skipWhile (=='#') <* scanSpace
+scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
 isCodeFenceChar :: Char -> Bool
 isCodeFenceChar '`' = True
@@ -212,10 +218,16 @@ isCodeFenceChar '~' = True
 isCodeFenceChar _   = False
 
 scanCodeFenceLine :: Scanner
-scanCodeFenceLine = do
+scanCodeFenceLine = () <$ parseCodeFenceLine
+
+parseCodeFenceLine :: A.Parser (Text, Text)
+parseCodeFenceLine = do
   c <- A.satisfy isCodeFenceChar
   A.count 2 (A.char c)
-  return ()
+  extra <- A.takeWhile (== c)
+  scanSpaces
+  rawattr <- A.takeText
+  return (T.pack [c,c,c] <> extra, rawattr)
 
 isBulletChar :: Char -> Bool
 isBulletChar '-' = True
@@ -224,20 +236,28 @@ isBulletChar '*' = True
 isBulletChar _   = False
 
 scanListMarker :: Scanner
-scanListMarker =
-  (scanBulletChar <|> scanParensNum <|> scanRegNum) >> scanSpace
+scanListMarker = parseListMarker *> scanSpace *> scanSpaces
 
-scanBulletChar :: Scanner
-scanBulletChar = () <$ A.satisfy isBulletChar
+parseListMarker :: A.Parser ListType
+parseListMarker = parseBullet <|> parseListNumber
 
-scanParensNum :: Scanner
-scanParensNum = A.char '(' >> scanNumber >> A.char ')' >> return ()
+parseBullet :: A.Parser ListType
+parseBullet =
+  Bullet <$> A.satisfy isBulletChar
 
-scanRegNum :: Scanner
-scanRegNum = scanNumber <* (A.char '.' <|> A.char ')')
-
-scanNumber :: Scanner
-scanNumber = A.satisfy isDigit >> A.skipWhile isDigit
+parseListNumber :: A.Parser ListType
+parseListNumber =
+  parseListNumberDig <|> parseListNumberPar
+  where parseListNumberDig = A.try $ do
+           num <- A.decimal
+           wrap <-  PeriodFollowing <$ A.char '.'
+                <|> ParenFollowing <$ A.char ')'
+           return $ Numbered wrap num
+        parseListNumberPar = A.try $ do
+           A.char '('
+           num <- A.decimal
+           A.char ')'
+           return $ Numbered ParensAround num
 
 ---
 
@@ -339,12 +359,12 @@ linesParser = do
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        processLines ls = singleton $ Para $ singleton $ Markdown $ joinLines ls
-       paraLine =  nfb scanBlankline
-                >> nfb scanIndentSpaces
-                >> nfb scanBlockquoteStart
-                >> nfb scanAtxHeaderStart
-                >> nfb scanCodeFenceLine
-                >> nfb (scanSpaces >> scanListMarker)
+       paraLine =   nfb scanBlankline
+                 >> nfb scanIndentSpaces
+                 >> nfb scanBlockquoteStart
+                 >> nfb scanAtxHeaderStart
+                 >> nfb scanCodeFenceLine
+                 >> nfb (scanSpaces >> scanListMarker)
 
 
 
