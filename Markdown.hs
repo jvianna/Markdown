@@ -184,19 +184,17 @@ scanChar :: Char -> Scanner
 scanChar c = A.char c >> return ()
 
 scanBlankline :: Scanner
-scanBlankline = A.skipWhile isSpaceOrTab *> A.endOfInput
+scanBlankline = A.skipWhile A.isHorizontalSpace  *> A.endOfInput
 
 scanSpace :: Scanner
-scanSpace = () <$ A.satisfy isSpaceOrTab
+scanSpace = () <$ A.satisfy A.isHorizontalSpace
 
 -- 0 or more spaces
 scanSpaces :: Scanner
-scanSpaces = A.skipWhile isSpaceOrTab
+scanSpaces = A.skipWhile A.isHorizontalSpace
 
-isSpaceOrTab :: Char -> Bool
-isSpaceOrTab ' '  = True
-isSpaceOrTab '\t' = True
-isSpaceOrTab _    = False
+scanSpnl :: Scanner
+scanSpnl = scanSpaces *> opt (A.endOfLine *> scanSpaces)
 
 -- optional
 opt :: Scanner -> Scanner
@@ -224,7 +222,7 @@ scanHRuleLine = A.try $ do
   scanNonindentSpaces
   c <- A.satisfy (\c -> c == '*' || c == '-' || c == '_')
   A.count 2 $ A.try $ scanSpaces >> A.char c
-  A.skipWhile (\x -> isSpaceOrTab x || x == c)
+  A.skipWhile (\x -> A.isHorizontalSpace x || x == c)
   A.endOfInput
   return ()
 
@@ -489,97 +487,42 @@ parseLines = do
 joinLines :: [Text] -> Text
 joinLines = T.intercalate (T.pack "\n")
 
-{-
-
-
--- | Applies a parser and returns the raw text that was parsed,
--- along with the value produced by the parser.
-withRaw :: P a -> P (a, Text)
-withRaw parser = do
-  pos1 <- getPosition
-  inp <- getInput
-  result <- parser
-  pos2 <- getPosition
-  let (l1,c1) = (sourceLine pos1, sourceColumn pos1)
-  let (l2,c2) = (sourceLine pos2, sourceColumn pos2)
-  let inplines = take ((l2 - l1) + 1) $ T.lines inp
-  let raw = case inplines of
-                []   -> error "raw: inplines is null" -- shouldn't happen
-                [l]  -> T.take (c2 - c1) l
-                ls   -> T.unlines (init ls) <> T.take (c2 - 1) (last ls)
-  return (result, raw)
-
-pEscapedChar :: P Char
-pEscapedChar = try $ char '\\' *> satisfy isEscapable
+pEscapedChar :: A.Parser Char
+pEscapedChar = A.try $ A.char '\\' *> A.satisfy isEscapable
 
 isEscapable :: Char -> Bool
 isEscapable c = isSymbol c || isPunctuation c
 
 -- parses a character satisfying the predicate, but understands escaped
 -- symbols
-pSatisfy :: (Char -> Bool) -> P Char
+pSatisfy :: (Char -> Bool) -> A.Parser Char
 pSatisfy p =
-  satisfy (\c -> c /= '\\' && p c)
-   <|> try (char '\\' *> satisfy (\c -> isEscapable c && p c))
+  A.satisfy (\c -> c /= '\\' && p c)
+   <|> A.try (A.char '\\' *> A.satisfy (\c -> isEscapable c && p c))
 
-pAnyChar :: P Char
+pAnyChar :: A.Parser Char
 pAnyChar = pSatisfy (const True)
 
-pNonspaceChar :: P Char
-pNonspaceChar = pSatisfy (`notElem` " \t\r\n")
-
-pBlankline :: P ()
-pBlankline = try $ skipMany pSpaceChar <* newline
-
-pBlockquoteStart :: P ()
-pBlockquoteStart = try $ pNonindentSpaces *> char '>' *> optional (char ' ')
-
-pIndentSpace :: P ()
-pIndentSpace = try (() <$ count 4 (char ' '))
-  <|> try (pNonindentSpaces >> char '\t' >> return ())
-
-pNonindentSpaces :: P String
-pNonindentSpaces = do
-  option "" $ do
-    char ' '
-    option " " $ do
-      char ' '
-      option "  " $ do
-        char ' '
-        return "   "
-
-pSpaceChar :: P Char
-pSpaceChar = oneOf " \t"
-
-pLine :: P Text
-pLine = T.pack <$> (  manyTill (satisfy (/='\n')) newline
-                  <|> many1 anyChar  -- for last line w/o newline
-                   )
-
-pSp :: P ()
-pSp = skipMany pSpaceChar
-
-pSpnl :: P ()
-pSpnl = try $ pSp *> optional (newline *> pSp)
-
-pCodeFenceLine :: P (String, CodeAttr)
-pCodeFenceLine = try $ do
-  c <- oneOf "`~"
-  count 2 (char c)
-  extra <- many (char '`')
-  attr <- parseCodeAttributes <$> pLine
-  return (c:c:c:extra, attr)
+pNonspaceChar :: A.Parser Char
+pNonspaceChar = pSatisfy isNonspaceChar
+  where isNonspaceChar ' '  = False
+        isNonspaceChar '\n' = False
+        isNonspaceChar '\t' = False
+        isNonspaceChar '\r' = False
+        isNonspaceChar _    = True
 
 -- | Parses one of a list of strings (tried in order).
-oneOfStrings :: [String] -> P String
+oneOfStrings :: [String] -> A.Parser String
 oneOfStrings []   = fail "no strings"
 oneOfStrings strs = do
-  c <- anyChar
+  c <- A.anyChar
   let strs' = [xs | (x:xs) <- strs, x == c]
   case strs' of
        []  -> fail "not found"
        z | "" `elem` z -> return [c]
-         | otherwise   -> (c:) `fmap` oneOfStrings strs'
+         | otherwise   -> (c:) <$> oneOfStrings strs'
+
+{-
 
 -- | Parses a URI. Returns pair of original and URI-escaped version.
 uri :: P (Text, Text)
