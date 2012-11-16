@@ -42,7 +42,7 @@ module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.List (intercalate)
-import Data.Char (isAscii, isSpace, isPunctuation, isSymbol)
+import Data.Char (isAscii, isSpace, isPunctuation, isSymbol, isDigit)
 import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
@@ -168,10 +168,19 @@ scanChar :: Char -> Scanner
 scanChar c = A.char c >> return ()
 
 scanBlankline :: Scanner
-scanBlankline = A.skipMany spacechar >> A.endOfInput
+scanBlankline = A.skipWhile isSpaceOrTab *> A.endOfInput
 
-spacechar :: Scanner
-spacechar = () <$ A.satisfy (\c -> c == ' ' || c == '\t')
+scanSpace :: Scanner
+scanSpace = () <$ A.satisfy isSpaceOrTab
+
+-- 0 or more spaces
+scanSpaces :: Scanner
+scanSpaces = A.skipWhile isSpaceOrTab
+
+isSpaceOrTab :: Char -> Bool
+isSpaceOrTab ' '  = True
+isSpaceOrTab '\t' = True
+isSpaceOrTab _    = False
 
 scanIndentSpaces :: Scanner
 scanIndentSpaces =
@@ -180,7 +189,7 @@ scanIndentSpaces =
        (scanChar '\t' <|>
         (scanChar ' ' >>
          (scanChar '\t' <|>
-           (scanChar ' ' >> spacechar)))))
+           (scanChar ' ' >> scanSpace)))))
 
 -- optional
 opt :: Scanner -> Scanner
@@ -188,7 +197,50 @@ opt s = A.option () (s >> return ())
 
 -- not followed by
 nfb :: Scanner -> Scanner
-nfb s = (s >> mzero) <|> return ()
+nfb s = do
+  succeeded <- A.option False (True <$ s)
+  if succeeded
+     then mzero
+     else return ()
+
+scanAtxHeaderStart :: Scanner
+scanAtxHeaderStart = A.char '#' *> A.skipWhile (=='#') <* scanSpace
+
+isCodeFenceChar :: Char -> Bool
+isCodeFenceChar '`' = True
+isCodeFenceChar '~' = True
+isCodeFenceChar _   = False
+
+scanCodeFenceLine :: Scanner
+scanCodeFenceLine = do
+  c <- A.satisfy isCodeFenceChar
+  A.count 2 (A.char c)
+  return ()
+
+isBulletChar :: Char -> Bool
+isBulletChar '-' = True
+isBulletChar '+' = True
+isBulletChar '*' = True
+isBulletChar _   = False
+
+scanListMarker :: Scanner
+scanListMarker =
+  (scanBulletChar <|> scanParensNum <|> scanRegNum) >> scanSpace
+
+scanBulletChar :: Scanner
+scanBulletChar = () <$ A.satisfy isBulletChar
+
+scanParensNum :: Scanner
+scanParensNum = A.char '(' >> scanNumber >> A.char ')' >> return ()
+
+scanRegNum :: Scanner
+scanRegNum = scanNumber <* (A.char '.' <|> A.char ')')
+
+scanNumber :: Scanner
+scanNumber = A.satisfy isDigit >> A.skipWhile isDigit
+
+---
+
 
 data BlockParserState = BlockParserState{
           inputLines    :: [Text]
@@ -290,90 +342,19 @@ linesParser = do
        paraLine =  nfb scanBlankline
                 >> nfb scanIndentSpaces
                 >> nfb scanBlockquoteStart
-               -- TODO >> nfb scanAtxHeaderStart
-               -- >> nfb (scanSpaces >> scanListMarker)
-               -- >> nfb scanCodeFenceLine
+                >> nfb scanAtxHeaderStart
+                >> nfb scanCodeFenceLine
+                >> nfb (scanSpaces >> scanListMarker)
 
 
-{-
- 
-
-parseBlocks :: Text -> Either ParseError (Blocks, ReferenceMap)
-parseBlocks = runP withRefs startingState "input"
-  where withRefs = do x <- pDoc
-                      y <- linkReferences <$> getState
-                      return (x,y)
-
--- Functions to maintain two stacks of scanners:
---
--- * The "begin line scanners" are run at the beginning
---   of a line that continues an existing block.
--- * The "begin block scanners" are run at the beginning
---   of a new block.
-
-withBeginLineScanner :: P () -> P a -> P a
-withBeginLineScanner scanner p = try $ do
-  updateState $ \st -> st{ beginLineScanners =
-                           beginLineScanners st ++ [scanner] }
-  result <- p
-  updateState $ \st -> st{ beginLineScanners =
-        case reverse (beginLineScanners st) of
-                 (_:xs) -> reverse xs
-                 []     -> [] }
-  return result
-
-withBeginBlockScanner :: P () -> P a -> P a
-withBeginBlockScanner scanner p = try $ do
-  updateState $ \st -> st{ beginBlockScanners =
-                           beginBlockScanners st ++ [scanner] }
-  result <- p
-  updateState $ \st -> st{ beginBlockScanners =
-        case reverse (beginBlockScanners st) of
-                 (_:xs) -> reverse xs
-                 []     -> [] }
-  return result
-
--- When we begin parsing a block container, such as a blockquote
--- or list item, we push new scanners onto the begin line and
--- begin block stacks.  We then parse blocks until we can't
--- parse any more.  At that point we pop the scanners we added
--- and return the result.
---
--- Note: the scanners are applied in the order they were added
--- to the stack.  We apply the first one that was added, then
--- the second, etc.
---
--- After a newline, we try the begin line parsers.  If they succeed,
--- the next line is considered part of the current block.
--- Otherwise, we consider the block closed and try to parse
--- another block.
-
--- | Parse one or more blocks with new begin line and begin block
--- scanners.
-pBlocks :: P () -> P () -> P Blocks
-pBlocks beginLineScanner beginBlockScanner =
-  withBeginLineScanner beginLineScanner $
-    withBeginBlockScanner beginBlockScanner $
-      msum <$> (pBlock `sepBy1` pBlockSep)
-
--- | Parse optional blanklines separating blocks, plus whatever
--- the begin block scanners require at the beginning of a new block.
-pBlockSep :: P Int
-pBlockSep = try $ do
-  num <- length <$> many (try $ pBeginBlock >> pBlankline)
-  pBeginBlock
-  return num
-
--- | Parses line beginning for new block.
-pBeginBlock :: P ()
-pBeginBlock = try $ getState >>= sequence_ . beginBlockScanners
-
-pBeginLine :: P ()
-pBeginLine = try $ getState >>= sequence_ . beginLineScanners
-
--}
 
 -- Utility parsers.
+
+joinLines :: [Text] -> Text
+joinLines = T.intercalate (T.pack "\n")
+
+{-
+
 
 -- | Applies a parser and returns the raw text that was parsed,
 -- along with the value produced by the parser.
@@ -444,9 +425,6 @@ pSp = skipMany pSpaceChar
 
 pSpnl :: P ()
 pSpnl = try $ pSp *> optional (newline *> pSp)
-
-joinLines :: [Text] -> Text
-joinLines = T.intercalate (T.pack "\n")
 
 pCodeFenceLine :: P (String, CodeAttr)
 pCodeFenceLine = try $ do
@@ -575,6 +553,8 @@ pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
         pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
         pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
 
+
+-}
 
 {-
 -- Block-level parsers.
@@ -776,7 +756,9 @@ pAtxHeader = do
 -}
 
 parseInlines :: ReferenceMap -> Text -> Inlines
-parseInlines refmap t =
+parseInlines refmap t = singleton $ Str t  -- TODO
+
+{-
   case runP (msum <$> many pInline <* eof) st "" t of
                            Left e  -> singleton $ Err t' (T.pack $ show e)
                            Right r -> r
@@ -915,6 +897,7 @@ pEmailAddress :: P Inlines
 pEmailAddress = do
   (orig,escaped) <- emailAddress
   return $ singleton $ Link (singleton $ Str orig) escaped (T.empty)
+-}
 
 -- blocks
 
