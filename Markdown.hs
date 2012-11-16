@@ -352,23 +352,46 @@ blocksParser :: BlockParser Blocks
 blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
  where doLine ln  = do
           next <- tryScanners
-                    [ (scanBlockquoteStart, blockquoteParser)
+                    [ (scanBlockquoteStart, parseBlockquote)
+                    , (scanCodeFenceLine, parseCodeFence)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
-       tryScanners [] _            = linesParser
+       tryScanners [] _            = parseLines
        tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
                                           Just _  -> p
                                           Nothing -> tryScanners rest ln
 
-blockquoteParser :: BlockParser Blocks
-blockquoteParser = singleton . Blockquote <$>
+parseBlockquote :: BlockParser Blocks
+parseBlockquote = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
     $ withBlockScanner scanBlockquoteStart
         $ blocksParser)
 
-linesParser :: BlockParser Blocks
-linesParser = do
+parseCodeFence :: BlockParser Blocks
+parseCodeFence = do
+  next <- maybe "" id <$> nextLine Consume BlockScan
+  case A.parseOnly parseCodeFenceLine next of
+       Left _  -> return $ singleton $ Para $ singleton $ Str next
+       Right (fence, rawattr) ->
+         singleton . CodeBlock (parseCodeAttributes rawattr)
+          . joinLines . reverse <$> getLines fence
+   where getLines fence = do
+           mbln <- nextLine Consume BlockScan
+           case mbln of
+                Nothing -> return []
+                Just ln
+                  | fence `T.isPrefixOf` ln -> return []
+                  | otherwise -> (ln:) <$> getLines fence
+
+parseCodeAttributes :: Text -> CodeAttr
+parseCodeAttributes t = CodeAttr { codeLang = lang }
+  where lang = case T.words (T.strip t) of
+                     []    -> Nothing
+                     (l:_) -> Just l
+
+parseLines :: BlockParser Blocks
+parseLines = do
   next <- nextLine Consume BlockScan
   processLines <$> maybe (return []) (\x ->
                           (x:) <$> (withLineScanner paraLine getLines)) next
@@ -497,12 +520,6 @@ pCodeFenceLine = try $ do
   extra <- many (char '`')
   attr <- parseCodeAttributes <$> pLine
   return (c:c:c:extra, attr)
-
-parseCodeAttributes :: Text -> CodeAttr
-parseCodeAttributes t = CodeAttr { codeLang = lang }
-  where lang = case T.words (T.strip t) of
-                     []    -> Nothing
-                     (l:_) -> Just l
 
 -- | Parses one of a list of strings (tried in order).
 oneOfStrings :: [String] -> P String
