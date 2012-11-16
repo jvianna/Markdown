@@ -42,13 +42,14 @@ module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.List (intercalate)
-import Data.Char (isAscii, isSpace, isPunctuation, isSymbol, isDigit)
+import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
+                    isDigit, isAlphaNum)
 import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
 import Control.Monad
-import Control.Applicative hiding (many,optional,empty)
-import Text.Parsec hiding (sepBy1, State, (<|>))
+import Control.Applicative hiding (optional,empty)
+import Text.Parsec hiding (sepBy1, State, (<|>), many)
 import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
@@ -706,47 +707,44 @@ pList = try $ do
 -}
 
 parseInlines :: ReferenceMap -> Text -> Inlines
-parseInlines refmap t = singleton $ Str t  -- TODO
+parseInlines refmap t =
+  case A.parseOnly (msum <$> many pInline <* A.endOfInput) t of
+       Left e   -> singleton $ Err (T.strip t) (T.pack $ show e)
+       Right r  -> r
 
-{-
-  case runP (msum <$> many pInline <* eof) st "" t of
-                           Left e  -> singleton $ Err t' (T.pack $ show e)
-                           Right r -> r
- where st = startingState{ linkReferences = refmap }
-       t' = T.strip t
-
-pInline :: P Inlines
+pInline :: A.Parser Inlines
 pInline =  pSpace
-       <|> pUri
+       -- <|> pUri
        <|> pStr
-       <|> pStrong '*'
-       <|> pStrong '_'
-       <|> pEmph '*'
-       <|> pEmph '_'
-       <|> pLink
-       <|> pImage
-       <|> pCode
-       <|> pEntity
-       <|> pAutolink
-       <|> pRawHtml
+       -- <|> pStrong '*'
+       -- <|> pStrong '_'
+       -- <|> pEmph '*'
+       -- <|> pEmph '_'
+       -- <|> pLink
+       -- <|> pImage
+       -- <|> pCode
+       -- <|> pEntity
+       -- <|> pAutolink
+       -- <|> pRawHtml
        <|> pSym
 
-pSpace :: P Inlines
+pSpace :: A.Parser Inlines
 pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
-  where pSpaceSpace = try $ pSpaceChar >>
+  where pSpaceSpace = A.try $ scanSpace >>
             (pSpaceNewline <|> pSpaceLB <|> return Space)
-        pSpaceLB = try $ pSpaceChar >> pSp >>
+        pSpaceLB = A.try $ scanSpace >> scanSpaces >>
                       ((pSpaceNewline >> return LineBreak) <|> return Space)
-        pSpaceNewline = newline >> pSp >> return SoftBreak
+        pSpaceNewline = A.endOfLine >> scanSpaces >> return SoftBreak
 
-pStr :: P Inlines
-pStr = do
-  first <- alphaNum
-  rest <- many $ alphaNum <|> (try $ char '_' <* lookAhead alphaNum)
-  return $ singleton . Str . T.pack $ first:rest
+pStr :: A.Parser Inlines
+pStr = singleton . Str . T.concat <$> strChunk `A.sepBy1` underscore
+  where strChunk = A.takeWhile1 isAlphaNum
+        underscore = A.string "_"
 
-pSym :: P Inlines
+pSym :: A.Parser Inlines
 pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
+
+{-
 
 pUri :: P Inlines
 pUri = do
