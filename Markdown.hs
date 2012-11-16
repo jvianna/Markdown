@@ -47,7 +47,7 @@ import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
 import Control.Monad
 import Control.Applicative hiding (optional,empty)
-import Text.Parsec hiding (sepBy1, State, (<|>), many)
+import Text.Parsec hiding (sepBy1, State, (<|>), many, many1)
 import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
@@ -731,21 +731,35 @@ pEnclosure refmap = do
   (A.char c >> ((A.char c >> pThree c refmap) <|> pTwo c refmap))
     <|> pOne c refmap
 
+-- parse inlines til you hit a c, and emit Emph.
+-- if you never hit a c, emit '*' + inlines parsed.
 pOne :: Char -> ReferenceMap -> A.Parser Inlines
-pOne c refmap = undefined
--- parse inlines til you hit c nfb c.
--- if you never do, emit fallback.
+pOne c refmap = do
+  nfb A.space
+  contents <- msum <$> many ( (nfb (A.char c) >> pInline refmap)
+                             <|> (A.string (T.pack [c,c]) >> pTwo c refmap)
+                              )
+  (A.char c >> return (singleton $ Emph contents))
+    <|> return (singleton (Str (T.singleton c)) <> contents)
 
+
+-- parse inlines til you hit two c's, and emit Strong.
+-- if you never do hit two c's, emit '**' plus + inlines parsed.
 pTwo :: Char -> ReferenceMap -> A.Parser Inlines
-pTwo c refmap = undefined
--- parse inlines til you hit cc.
--- if you never do, emit fallback.
+pTwo c refmap = do
+  nfb A.space
+  let ender = A.string $ T.pack [c,c]
+  contents <- msum <$> many (nfb ender >> pInline refmap)
+  (ender >> return (singleton $ Strong contents))
+    <|> return (singleton (Str $ T.pack [c,c]) <> contents)
 
+-- parse inlines til you hit one c or a sequence of two c's.
+-- If one c, emit Emph and then parse pTwo.
+-- if two c's, emit Strong and then parse pOne.
 pThree :: Char -> ReferenceMap -> A.Parser Inlines
-pThree c refmap = undefined
--- parse inlines til you hit c or cc.  if
--- c, then emit Emph and then call pTwo.
--- if cc, then emit Strong and then call pOne.
+pThree c refmap = do
+  nfb A.space
+  undefined
 
 {-
 
@@ -754,7 +768,7 @@ pEmph c refmap = do
   A.char c
   nfb A.space
   contents <- msum <$>
-     A.many1 ( (nfb (A.char c) >> nfb A.endOfInput >> pInline refmap)
+     many1 ( (nfb (A.char c) >> nfb A.endOfInput >> pInline refmap)
             <|> pStrong c refmap)
   (A.char c >> return (singleton (Emph contents)))
     <|> return (Str "*" <| contents)
