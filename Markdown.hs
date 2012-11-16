@@ -728,77 +728,6 @@ pReference = try $ do
   addLinkReference lab (url,tit)
   return empty
 
-pHruleLine :: P ()
-pHruleLine = do
-  pNonindentSpaces
-  c <- oneOf "*-_"
-  count 2 (try $ pSp >> char c)
-  skipMany $ try $ pSp >> char c
-  pSp
-  lookAhead newline
-  return ()
-
-pHrule :: P Blocks
-pHrule = singleton HRule <$ try pHruleLine
-
--- handles paragraphs and setext headers and hrules
-pPara :: P Blocks
-pPara = processLines . filter (not . T.null)
-       <$> withBeginLineScanner paraLine (pLine `sepBy1` pBeginLine)
- where paraLine = notFollowedBy pBlankline
-                >> notFollowedBy pIndentSpace
-                >> notFollowedBy pBlockquoteStart
-                >> notFollowedBy pAtxHeaderStart
-                >> notFollowedBy (try $ pSp >> pListMarker)
-                >> notFollowedBy pCodeFenceLine
-       markdown = singleton . Markdown . T.strip
-       processLines [] = empty
-       processLines ws =
-         case break isSpecialLine ws of
-               (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
-               (xs,(y:ys))
-                 | isSetextLine y ->
-                     case reverse xs of
-                           []     -> Header (setextLevel y) empty
-                                     <| processLines ys
-                           [z]    -> Header (setextLevel y) (markdown z)
-                                     <| processLines ys
-                           (z:zs) -> Para (markdown $ joinLines $ reverse zs)
-                                  <| Header (setextLevel y) (markdown z)
-                                  <| processLines ys
-                 | isHruleLine y  ->
-                     case xs of
-                           []     -> HRule
-                                     <| processLines ys
-                           _      -> Para (markdown $ joinLines xs)
-                                     <| HRule
-                                     <| processLines ys
-                 | otherwise      -> error "Should not happen"
-       isSetext1Line x = not (T.null x) && T.all (=='=') x
-       isSetext2Line x = not (T.null x) && T.all (=='-') x
-       isSetextLine  x = isSetext1Line x || isSetext2Line x
-       setextLevel   x = if isSetext1Line x then 1 else 2
-       isHruleLine x = case runP pHruleLine startingState "" x of
-                            Right _ -> True
-                            Left _  -> False
-       isSpecialLine x = isSetextLine x || isHruleLine x
-
-pBlockquote :: P Blocks
-pBlockquote = singleton . Blockquote <$>
-  try (pBlockquoteStart >> pBlocks (optional pBlockquoteStart) pBlockquoteStart)
-
-pCodeFence :: P Blocks
-pCodeFence = try $ do
-  (fence, attr) <- pCodeFenceLine
-  lns <- manyTill pLine (try $ string fence >> pLine)
-  return $ singleton $ CodeBlock attr $ T.unlines lns
-
-pCodeBlock :: P Blocks
-pCodeBlock = try $ do
-  pIndentSpace
-  singleton . CodeBlock CodeAttr{ codeLang = Nothing } . T.unlines
-    <$> withBeginLineScanner pIndentSpace (pLine `sepBy1` pBeginLine)
-
 pList :: P Blocks
 pList = try $ do
   sps <- pNonindentSpaces
@@ -852,15 +781,6 @@ pListStart (Numbered w _) = try $ do
   case marker of
         Numbered w' _ | w == w' -> return ()
         _                       -> fail "Change in list style"
-
-pAtxHeaderStart :: P Int
-pAtxHeaderStart = length <$> try (many1 (char '#') <* pSpaceChar)
-
-pAtxHeader :: P Blocks
-pAtxHeader = do
-  lev <- pAtxHeaderStart
-  singleton . Header lev . singleton . Markdown . stripClosingHashes <$> pLine
-   where stripClosingHashes = T.strip . T.dropAround (=='#') . T.strip
 
 
 -}
