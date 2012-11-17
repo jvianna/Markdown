@@ -8,9 +8,6 @@ TODO
 * html blocks
 * optimizations
 * comment
-* use attoparsec's 'scanChar' to make an efficient escape-aware takeWhile1.
-* scanChar can also be used for a line-by-line tab replacer
-  this can be slotted in to nextLine
 
 QUESTIONS
 
