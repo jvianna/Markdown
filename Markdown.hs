@@ -508,15 +508,15 @@ pQuoted c = A.try $ do
   A.char c
   return (T.singleton c <> contents <> T.singleton c)
 
-{-
-pLinkLabel :: P Text
-pLinkLabel = try $ char '[' *>
-  (T.concat <$> (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
-  where regChunk = T.pack <$> many1 (pSatisfy (`notElem` "`[]"))
-        codeChunk = snd <$> withRaw pCode
+pLinkLabel :: A.Parser Text
+pLinkLabel = A.try $ A.char '[' *> (T.concat <$>
+  (A.manyTill (regChunk <|> bracketed <|> codeChunk) (A.char ']')))
+  where regChunk = T.pack <$> A.many1 (pSatisfy (A.notInClass "`[]"))
+        codeChunk = snd <$> pCode'
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
 
+{-
 pLinkUrl :: P Text
 pLinkUrl = try $ do
   inPointy <- (char '<' >> return True) <|> return False
@@ -740,24 +740,28 @@ pThree c refmap = do
    <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
 pCode :: A.Parser Inlines
-pCode = do
+pCode = fst <$> pCode'
+
+pCode' :: A.Parser (Inlines, Text)
+pCode' = A.try $ do
   ticks <- A.takeWhile1 (== '`')
   let end = A.try $ A.string ticks >> nfb (A.char '`')
   let nonBacktickSpan = A.takeWhile1 (/= '`')
   let backtickSpan = A.takeWhile1 (== '`')
-  singleton . Code . T.strip . T.concat
-   <$> A.manyTill (nonBacktickSpan <|> backtickSpan) end
+  contents <- T.concat <$> A.manyTill (nonBacktickSpan <|> backtickSpan) end
+  return (singleton . Code . T.strip $ contents, ticks <> contents <> ticks)
 
 {-
-pLink :: P Inlines
-pLink = try $ do
+
+pLink :: A.Parser Inlines
+pLink = do
   lab <- pLinkLabel
   refmap <- linkReferences <$> getState
   let lab' = parseInlines refmap lab
   pInlineLink lab' <|> pReferenceLink lab lab'
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
-pInlineLink :: Inlines -> P Inlines
+pInlineLink :: Inlines -> A.Parser Inlines
 pInlineLink lab = try $ do
   char '('
   pSp
@@ -768,6 +772,7 @@ pInlineLink lab = try $ do
 
 pReferenceLink :: Text -> Inlines -> P Inlines
 pReferenceLink rawlab lab = try $ do
+
   ref <- option rawlab $ try $ pSpnl >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
   lookupResult <- lookupLinkReference ref'
