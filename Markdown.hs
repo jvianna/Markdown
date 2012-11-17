@@ -485,35 +485,42 @@ pNonspaceChar = pSatisfy isNonspaceChar
         isNonspaceChar '\r' = False
         isNonspaceChar _    = True
 
-{-
-
-data HtmlTagType = Opening Text | Closing Text | SelfClosing Text
+data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
 -- returns name of tag needed to close, and whole tag
-pHtmlTag :: P (HtmlTagType, Text)
-pHtmlTag = try $ do
-  char '<'
+pHtmlTag :: A.Parser (HtmlTagType, Text)
+pHtmlTag = A.try $ do
+  A.char '<'
   -- do not end the tag with a > character in a quoted attribute.
-  closing <- (char '/' >> return True) <|> return False
-  tagname <- T.toLower . T.pack <$> many1 alphaNum
-  lookAhead $ oneOf " \t\r\n/>"
-  chunks <- manyTill (pQuoted '\'' <|> pQuoted '"'
-                       <|> many1 (noneOf "\"'<>"))  (char '>')
-  let body = concat chunks
+  closing <- (A.char '/' >> return True) <|> return False
+  tagname <- T.toLower <$>
+                A.takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
+  let attr = do ss <- A.takeWhile isSpace
+                x <- A.letter
+                xs <- A.takeWhile (\c -> isAlphaNum c || c == ':')
+                A.skip (=='=')
+                v <- pQuoted '"' <|> pQuoted '\'' <|> A.takeWhile1 isAlphaNum
+                      <|> return ""
+                return $ ss <> T.singleton x <> xs <> "=" <> v
+  attrs <- T.concat <$> many (A.try attr)
+  final <- A.takeWhile (\c -> isSpace c || c == '/')
+  A.char '>'
   let tagtype = if closing
                    then Closing tagname
-                   else case reverse body of
-                         ('/':_) -> SelfClosing tagname
-                         _       -> Opening tagname
-  return (tagtype, T.pack ('<' : ['/' | closing]) <> tagname <> T.pack body
-                            <> ">")
+                   else case T.stripSuffix "/" final of
+                         Just _  -> SelfClosing tagname
+                         Nothing -> Opening tagname
+  return (tagtype,
+          T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
 
-pQuoted :: Char -> P String
-pQuoted c = try $ do
-  char c
-  contents <- manyTill (satisfy (/= c)) (char c)
-  return (c : contents ++ [c])
+pQuoted :: Char -> A.Parser Text
+pQuoted c = A.try $ do
+  A.char c
+  contents <- A.takeTill (== c)
+  A.char c
+  return (T.singleton c <> contents <> T.singleton c)
 
+{-
 pLinkLabel :: P Text
 pLinkLabel = try $ char '[' *>
   (T.concat <$> (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
@@ -635,6 +642,7 @@ pInline refmap =
        -- <|> pImage refmap
        <|> pCode
        <|> pEntity
+       <|> pRawHtml
        <|> pInPointyBrackets
        <|> pSym
 
@@ -812,16 +820,18 @@ pHexEntity = A.try $ do
   res <- A.takeWhile1 isHexDigit
   return $ "#" <> T.singleton x <> res
 
+pRawHtml :: A.Parser Inlines
+pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
+
 pInPointyBrackets :: A.Parser Inlines
 pInPointyBrackets = A.try $ do
   A.char '<'
   t <- A.takeWhile1 (/='>')
   A.char '>'
-  return $ case t of
-                _ | startsWithProtocol t -> autoLink t
-                  | T.any (=='@') t && T.all (/=' ') t -> emailLink t
-                  | isHtmlTag t -> htmlTag t
-                  | otherwise   -> fail "Unknown contents of <>"
+  case t of
+       _ | startsWithProtocol t -> return $ autoLink t
+         | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
+         | otherwise   -> fail "Unknown contents of <>"
 
 scanMatches :: Scanner -> Text -> Bool
 scanMatches scanner t =
@@ -833,23 +843,12 @@ startsWithProtocol :: Text -> Bool
 startsWithProtocol =
   scanMatches $ A.choice (map A.string uriProtocols) >> A.skip (== ':')
 
--- TODO just temporary, doesn't handle > in quoted attribute.
--- better use snd <$> pHtmlTag
-isHtmlTag :: Text -> Bool
-isHtmlTag =
-  scanMatches $ A.satisfy isTagChar *> A.skipWhile isAlphaNum
-                *> (A.skip isSpace <|> A.endOfInput)
-  where isTagChar c = isLetter c || c == '/' || isDigit c || c == '?' || c == '!'
-
 autoLink :: Text -> Inlines
 autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
 
 emailLink :: Text -> Inlines
 emailLink t = singleton $ Link (singleton $ Str t)
                                (escapeUri $ "mailto:" <> t) (T.empty)
-
-htmlTag :: Text -> Inlines
-htmlTag t = singleton $ RawHtml $ "<" <> t <> ">"
 
 -- blocks
 
