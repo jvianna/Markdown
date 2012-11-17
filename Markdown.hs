@@ -407,20 +407,18 @@ parseReference = do
                                        $ singleton $ Markdown raw
        Right (lab, url, tit) -> empty <$ addLinkReference lab (url,tit)
 
-pReference = mzero
-
-{-
-  pNonindentSpaces
+pReference :: A.Parser (Text, Text, Text)
+pReference = do
+  scanNonindentSpaces
   lab <- pLinkLabel
-  char ':'
-  pSpnl
+  A.char ':'
+  scanSpnl
   url <- pLinkUrl
-  tit <- option T.empty $ try $ pSpnl >> pLinkTitle
-  pBlankline
-  addLinkReference lab (url,tit)
-  return empty
--}
-
+  scanSpnl
+  tit <- A.option T.empty $ A.try $ scanSpnl >> pLinkTitle
+  scanSpaces
+  A.endOfInput
+  return (lab, url, tit)
 
 parseLines :: BlockParser Blocks
 parseLines = do
