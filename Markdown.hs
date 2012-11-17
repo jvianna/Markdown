@@ -423,6 +423,14 @@ pReference = do
   A.endOfInput
   return (lab, url, tit)
 
+parseListStart :: ListType -> A.Parser ()
+parseListStart (Bullet   c) = () <$ nfb scanHRuleLine <* A.char c <* scanSpace
+parseListStart (Numbered w _) = A.try $ do
+  marker <- parseListNumber
+  case marker of
+        Numbered w' _ | w == w' -> return ()
+        _                       -> fail "Change in list style"
+
 listParser :: BlockParser Blocks
 listParser = do
   first <- maybe "" id <$> nextLine Consume BlockScan
