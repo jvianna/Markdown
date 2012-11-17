@@ -38,16 +38,12 @@ QUESTIONS
 module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
 import Control.Monad.State
-import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
                     isDigit, isHexDigit, isAlphaNum, isLetter)
-import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
+import Network.URI (parseURI, isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
-import Control.Monad
 import Control.Applicative hiding (optional,empty)
-import Text.Parsec hiding (sepBy1, State, (<|>), many, many1)
-import Text.Parsec.Text
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
 
@@ -63,17 +59,9 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
-import Debug.Trace
-tr s = trace s (return ())
+-- import Debug.Trace
+-- tr s = trace s (return ())
 
-
--- Replacement for Parsec's 'sepBy1', which does not have the @try@
--- and so does not behave as I want it to.
-sepBy1 :: Parsec s u a -> Parsec s u b -> Parsec s u [a]
-sepBy1 p sep = do
-  first <- p
-  rest <- many $ try $ sep >> p
-  return (first:rest)
 
 -- Structured representation of a document.
 
@@ -126,7 +114,7 @@ applyScanners :: [Scanner] -> Text -> Maybe Text
 applyScanners scanners t =
   case A.parseOnly (sequence_ scanners >> A.takeText) t of
        Right t'   -> Just t'
-       Left e     -> Nothing
+       Left _err  -> Nothing
 
 -- Scanners
 
