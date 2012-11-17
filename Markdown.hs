@@ -108,6 +108,13 @@ data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
 
 type ReferenceMap = M.Map Text (Text, Text)
 
+addLinkReference :: Text -> (Text, Text) -> BlockParser ()
+addLinkReference key (url,tit) = modify $ \st ->
+  st{ references = M.insert (T.toUpper key) (url,tit) (references st) }
+
+lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
+lookupLinkReference refmap key = M.lookup (T.toUpper key) refmap
+
 type Scanner = A.Parser ()
 
 -- Try to match the scanner, returning Just the remaining text if
@@ -766,20 +773,12 @@ pInlineLink lab = A.try $ do
   return $ singleton $ Link lab url tit
 
 pReferenceLink :: ReferenceMap -> Text -> Inlines -> A.Parser Inlines
-pReferenceLink refmap rawlab lab = mzero -- TODO
-{-
-
-pReferenceLink :: Text -> Inlines -> P Inlines
-pReferenceLink rawlab lab = try $ do
-
-  ref <- option rawlab $ try $ pSpnl >> pLinkLabel
+pReferenceLink refmap rawlab lab = A.try $ do
+  ref <- A.option rawlab $ A.try $ scanSpaces >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
-  lookupResult <- lookupLinkReference ref'
-  case lookupResult of
+  case lookupLinkReference refmap ref' of
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
-
--}
 
 pImage :: ReferenceMap -> A.Parser Inlines
 pImage refmap = A.try $ do
