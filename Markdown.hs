@@ -232,6 +232,9 @@ scanListMarker = () <$ parseListMarker
 parseListMarker :: A.Parser ListType
 parseListMarker = parseBullet <|> parseListNumber
 
+scanListStart :: Scanner
+scanListStart = scanNonindentSpaces >> scanListMarker
+
 parseBullet :: A.Parser ListType
 parseBullet = do
   c <- A.satisfy isBulletChar
@@ -340,6 +343,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                     , (scanAtxHeaderStart, parseAtxHeader)
                     , (scanCodeFenceLine, parseCodeFence)
                     , (scanReference, parseReference)
+                    , (scanListStart, parseList)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
@@ -423,6 +427,35 @@ pReference = do
   scanSpaces
   A.endOfInput
   return (lab, url, tit)
+
+parseList :: BlockParser Blocks
+parseList = do
+  undefined
+  {-
+  sps <- pNonindentSpaces
+  col <- sourceColumn <$> getPosition
+  listType <- pListMarker
+  col' <- sourceColumn <$> getPosition
+  let sublistIndent = () <$ count (col' - col - 1) (char ' ')
+  let starter = try $ string sps *> pListStart listType
+  let listItemBlocks =
+        pBlocks (notFollowedBy
+                  (try $ string sps >> sublistIndent >> pSp >> pListMarker))
+                (try $ (string sps >> sublistIndent)
+                   <|> lookAhead (try $ pBlankline *> notFollowedBy pBlankline))
+  first <- listItemBlocks
+  isTight <- (== 0) <$> (lookAhead pBlockSep <|> return 0)
+  let listItem = try $ do
+        num <- pBlockSep
+        when (isTight && num > 0) $
+           fail "Change in tightness ends list"
+        starter
+        blocks <- listItemBlocks
+        return blocks
+  rest <- many listItem
+  let isTight' = if null rest then True else isTight
+  return $ singleton $ List isTight' listType (first:rest)
+-}
 
 parseLines :: BlockParser Blocks
 parseLines = do
@@ -594,44 +627,6 @@ pHtmlComment = try $ do
   string "<!--"
   rest <- manyTill anyChar (try $ string "-->")
   return $ "<!--" <> T.pack rest <> "-->"
-
-pReference :: P Blocks
-pReference = try $ do
-  pNonindentSpaces
-  lab <- pLinkLabel
-  char ':'
-  pSpnl
-  url <- pLinkUrl
-  tit <- option T.empty $ try $ pSpnl >> pLinkTitle
-  pBlankline
-  addLinkReference lab (url,tit)
-  return empty
-
-pList :: P Blocks
-pList = try $ do
-  sps <- pNonindentSpaces
-  col <- sourceColumn <$> getPosition
-  listType <- pListMarker
-  col' <- sourceColumn <$> getPosition
-  let sublistIndent = () <$ count (col' - col - 1) (char ' ')
-  let starter = try $ string sps *> pListStart listType
-  let listItemBlocks =
-        pBlocks (notFollowedBy
-                  (try $ string sps >> sublistIndent >> pSp >> pListMarker))
-                (try $ (string sps >> sublistIndent)
-                   <|> lookAhead (try $ pBlankline *> notFollowedBy pBlankline))
-  first <- listItemBlocks
-  isTight <- (== 0) <$> (lookAhead pBlockSep <|> return 0)
-  let listItem = try $ do
-        num <- pBlockSep
-        when (isTight && num > 0) $
-           fail "Change in tightness ends list"
-        starter
-        blocks <- listItemBlocks
-        return blocks
-  rest <- many listItem
-  let isTight' = if null rest then True else isTight
-  return $ singleton $ List isTight' listType (first:rest)
 
 -}
 
