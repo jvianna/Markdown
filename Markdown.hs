@@ -209,12 +209,13 @@ scanCodeFenceLine :: Scanner
 scanCodeFenceLine = () <$ parseCodeFenceLine
 
 parseCodeFenceLine :: A.Parser (Text, Text)
-parseCodeFenceLine = do
+parseCodeFenceLine = A.try $ do
   c <- A.satisfy isCodeFenceChar
   A.count 2 (A.char c)
   extra <- A.takeWhile (== c)
   scanSpaces
-  rawattr <- A.takeText
+  rawattr <- A.takeWhile (/='`')
+  A.endOfInput
   return (T.pack [c,c,c] <> extra, rawattr)
 
 isBulletChar :: Char -> Bool
@@ -658,13 +659,9 @@ pInline refmap =
        <|> pStr
        <|> pEnclosure '*' refmap
        <|> pEnclosure '_' refmap
-       -- <|> pStrong '*' refmap
-       -- <|> pStrong '_' refmap
-       -- <|> pEmph '*' refmap
-       -- <|> pEmph '_' refmap
        -- <|> pLink refmap
        -- <|> pImage refmap
-       -- <|> pCode
+       <|> pCode
        -- <|> pEntity
        -- <|> pAutolink
        -- <|> pRawHtml
@@ -773,43 +770,16 @@ pThree c refmap = do
    <|> (A.char c >> (pTwo c refmap (single Emph contents)))
    <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
+pCode :: A.Parser Inlines
+pCode = do
+  ticks <- A.takeWhile1 (== '`')
+  let end = A.try $ A.string ticks >> nfb (A.char '`')
+  let nonBacktickSpan = A.takeWhile1 (/= '`')
+  let backtickSpan = A.takeWhile1 (== '`')
+  singleton . Code . T.strip . T.concat
+   <$> A.manyTill (nonBacktickSpan <|> backtickSpan) end
+
 {-
-
-pEmph :: Char -> ReferenceMap -> A.Parser Inlines
-pEmph c refmap = do
-  A.char c
-  nfb A.space
-  contents <- msum <$>
-     many1 ( (nfb (A.char c) >> nfb A.endOfInput >> pInline refmap)
-            <|> pStrong c refmap)
-  (A.char c >> return (singleton (Emph contents)))
-    <|> return (Str "*" <| contents)
-
--- TODO parser for ***, which reads til either * or **
---  then we can omit the try in pStrong?
-
-pStrong _ _ = mzero
-
-
-pStrong :: Char -> P Inlines
-pStrong c = try $ do
-  let marker = try $ char c >> char c
-  marker
-  notFollowedBy pSpaceChar
-  contents <- msum <$> many1 (try $ notFollowedBy marker >> pInline)
-  marker
-  return (singleton (Strong contents))
-
-pCode :: P Inlines
-pCode = try $ do
-  numticks <- length <$> many1 (char '`')
-  pSp
-  let end = try $ count numticks (char '`') *> notFollowedBy (char '`')
-  let nonBacktickSpan = many1 (noneOf "`")
-  let backtickSpan = many1 (char '`')
-  singleton . Code . T.strip . T.pack . concat
-   <$> manyTill (nonBacktickSpan <|> backtickSpan) end
-
 pLink :: P Inlines
 pLink = try $ do
   lab <- pLinkLabel
