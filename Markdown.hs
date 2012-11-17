@@ -184,14 +184,14 @@ nfb s = do
      then mzero
      else return ()
 
-parseAtxHeaderStart :: A.Parser Int
-parseAtxHeaderStart = do
+atxHeaderParserStart :: A.Parser Int
+atxHeaderParserStart = do
   hashes <- A.takeWhile1 (=='#')
   scanSpace
   return $ T.length hashes
 
 scanAtxHeaderStart :: Scanner
-scanAtxHeaderStart = () <$ parseAtxHeaderStart
+scanAtxHeaderStart = () <$ atxHeaderParserStart
 
 scanHRuleLine :: Scanner
 scanHRuleLine = A.try $ do
@@ -208,10 +208,10 @@ isCodeFenceChar '~' = True
 isCodeFenceChar _   = False
 
 scanCodeFenceLine :: Scanner
-scanCodeFenceLine = () <$ parseCodeFenceLine
+scanCodeFenceLine = () <$ codeFenceParserLine
 
-parseCodeFenceLine :: A.Parser (Text, Text)
-parseCodeFenceLine = A.try $ do
+codeFenceParserLine :: A.Parser (Text, Text)
+codeFenceParserLine = A.try $ do
   c <- A.satisfy isCodeFenceChar
   A.count 2 (A.char c)
   extra <- A.takeWhile (== c)
@@ -227,10 +227,10 @@ isBulletChar '*' = True
 isBulletChar _   = False
 
 scanListMarker :: Scanner
-scanListMarker = () <$ parseListMarker
+scanListMarker = () <$ listParserMarker
 
-parseListMarker :: A.Parser ListType
-parseListMarker = parseBullet <|> parseListNumber
+listParserMarker :: A.Parser ListType
+listParserMarker = parseBullet <|> listParserNumber
 
 scanListStart :: Scanner
 scanListStart = scanNonindentSpaces >> scanListMarker
@@ -242,15 +242,15 @@ parseBullet = do
   nfb $ A.count 2 $ A.try $ scanSpaces >> A.char c -- hrule
   return $ Bullet c
 
-parseListNumber :: A.Parser ListType
-parseListNumber =
-  (parseListNumberDig <|> parseListNumberPar) <* scanSpace <* scanSpaces
-  where parseListNumberDig = A.try $ do
+listParserNumber :: A.Parser ListType
+listParserNumber =
+  (listParserNumberDig <|> listParserNumberPar) <* scanSpace <* scanSpaces
+  where listParserNumberDig = A.try $ do
            num <- A.decimal
            wrap <-  PeriodFollowing <$ A.char '.'
                 <|> ParenFollowing <$ A.char ')'
            return $ Numbered wrap num
-        parseListNumberPar = A.try $ do
+        listParserNumberPar = A.try $ do
            A.char '('
            num <- A.decimal
            A.char ')'
@@ -337,13 +337,13 @@ blocksParser :: BlockParser Blocks
 blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
  where doLine ln  = do
           next <- tryScanners
-                    [ (scanBlockquoteStart, parseBlockquote)
+                    [ (scanBlockquoteStart, blockquoteParser)
                     , ((scanIndentSpace >> nfb scanBlankline),
-                        parseIndentedCodeBlock)
-                    , (scanAtxHeaderStart, parseAtxHeader)
-                    , (scanCodeFenceLine, parseCodeFence)
-                    , (scanReference, parseReference)
-                    , (scanListStart, parseList)
+                        indentedCodeBlockParser)
+                    , (scanAtxHeaderStart, atxHeaderParser)
+                    , (scanCodeFenceLine, codeFenceParser)
+                    , (scanReference, referenceParser)
+                    , (scanListStart, listParser)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
@@ -352,36 +352,36 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                                           Just _  -> p
                                           Nothing -> tryScanners rest ln
 
-parseBlockquote :: BlockParser Blocks
-parseBlockquote = singleton . Blockquote <$>
+blockquoteParser :: BlockParser Blocks
+blockquoteParser = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
     $ withBlockScanner scanBlockquoteStart
         $ blocksParser)
 
-parseIndentedCodeBlock :: BlockParser Blocks
-parseIndentedCodeBlock =
+indentedCodeBlockParser :: BlockParser Blocks
+indentedCodeBlockParser =
   withLineScanner (scanIndentSpace <|> scanBlankline) $
   singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse <$> getLines
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
 
-parseAtxHeader :: BlockParser Blocks
-parseAtxHeader = do
+atxHeaderParser :: BlockParser Blocks
+atxHeaderParser = do
   next <- maybe "" T.strip <$> nextLine Consume BlockScan
   let next'  = T.strip $ T.dropAround (=='#') next
   let inside = if "\\" `T.isSuffixOf` next' && "#" `T.isSuffixOf` next
                        then next' <> "#"  -- escaped final #
                        else next'
-  case A.parseOnly parseAtxHeaderStart next of
+  case A.parseOnly atxHeaderParserStart next of
         Left _  -> return $ singleton $ Para $ singleton $ Str next
         Right lev -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
 
-parseCodeFence :: BlockParser Blocks
-parseCodeFence = do
+codeFenceParser :: BlockParser Blocks
+codeFenceParser = do
   next <- maybe "" id <$> nextLine Consume BlockScan
-  case A.parseOnly parseCodeFenceLine next of
+  case A.parseOnly codeFenceParserLine next of
        Left _  -> return $ singleton $ Para $ singleton $ Str next
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
@@ -400,8 +400,8 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
                      []    -> Nothing
                      (l:_) -> Just l
 
-parseReference :: BlockParser Blocks
-parseReference = do
+referenceParser :: BlockParser Blocks
+referenceParser = do
   first <- maybe "" id <$> nextLine Consume BlockScan
   let getLines = do
              mbln <- nextLine Consume LineScan
@@ -428,9 +428,9 @@ pReference = do
   A.endOfInput
   return (lab, url, tit)
 
-parseList :: BlockParser Blocks
-parseList = do
-  undefined
+listParser :: BlockParser Blocks
+listParser = do
+  fail "undefined"
   {-
   sps <- pNonindentSpaces
   col <- sourceColumn <$> getPosition
