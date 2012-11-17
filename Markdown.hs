@@ -249,8 +249,10 @@ parseListNumber =
            A.char ')'
            return $ Numbered ParensAround num
 
+-- note: this requires reference labels to be on one line.
 scanReference :: Scanner
-scanReference = mzero -- TODO
+scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
+  (scanSpace <|> A.endOfLine)
 
 ---
 
@@ -392,7 +394,21 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
 
 parseReference :: BlockParser Blocks
 parseReference = do
-  return empty -- TODO
+  first <- maybe "" id <$> nextLine Consume BlockScan
+  let getLines = do
+             mbln <- nextLine Consume LineScan
+             case mbln of
+                  Nothing  -> return []
+                  Just ln  -> (ln:) <$> getLines
+  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
+  let raw = joinLines (first:rest)
+  case A.parseOnly pReference raw of
+       Left  _               -> return $ singleton $ Para
+                                       $ singleton $ Markdown raw
+       Right (lab, url, tit) -> empty <$ addLinkReference lab (url,tit)
+
+pReference = mzero
+
 {-
   pNonindentSpaces
   lab <- pLinkLabel
