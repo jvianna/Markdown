@@ -4,6 +4,8 @@
 
 TODO
 
+* use attoparsec's 'scanChar' to make an efficient escape-aware takeWhile1.
+
 QUESTIONS
 
 * nested quotes in link title?  seems silly, but some impls do?
@@ -516,27 +518,23 @@ pLinkLabel = A.try $ A.char '[' *> (T.concat <$>
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
 
-{-
-pLinkUrl :: P Text
-pLinkUrl = try $ do
-  inPointy <- (char '<' >> return True) <|> return False
-  T.pack <$> if inPointy
-                then manyTill (pSatisfy (`notElem` "\r\n>")) (char '>')
-                else concat <$> many (regChunk <|> parenChunk)
-               where regChunk = many1 (pSatisfy (`notElem` " \t\r\n()"))
-                     parenChunk = inParens . concat <$>
-                                  (char '(' *>
-                                  manyTill (regChunk <|> parenChunk) (char ')'))
-                     inParens x = '(' : x ++ ")"
+pLinkUrl :: A.Parser Text
+pLinkUrl = A.try $ do
+  inPointy <- (A.char '<' >> return True) <|> return False
+  if inPointy
+     then A.takeWhile (A.notInClass "\r\n>") <* A.char '>'
+     else T.concat <$> many (regChunk <|> parenChunk)
+    where regChunk = A.takeWhile1 (A.notInClass " \t\r\n()")
+          parenChunk = inParens . T.concat <$> (A.char '(' *>
+                         A.manyTill (regChunk <|> parenChunk) (A.char ')'))
+          inParens x = "(" <> x <> ")"
 
-pLinkTitle :: P Text
+pLinkTitle :: A.Parser Text
 pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
-  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
-        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
-        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
+  where pLinkTitleDQ = A.try $ A.char '"' *> A.manyTill pAnyChar (A.char '"')
+        pLinkTitleSQ = A.try $ A.char '\'' *> A.manyTill pAnyChar (A.char '\'')
+        pLinkTitleP  = A.try $ A.char '(' *> A.manyTill pAnyChar (A.char ')')
 
-
--}
 
 {-
 -- Block-level parsers.
@@ -626,7 +624,7 @@ pInline refmap =
        <|> pStr
        <|> pEnclosure '*' refmap
        <|> pEnclosure '_' refmap
-       -- <|> pLink refmap
+       <|> pLink refmap
        -- <|> pImage refmap
        <|> pCode
        <|> pEntity
@@ -751,24 +749,25 @@ pCode' = A.try $ do
   contents <- T.concat <$> A.manyTill (nonBacktickSpan <|> backtickSpan) end
   return (singleton . Code . T.strip $ contents, ticks <> contents <> ticks)
 
-{-
-
-pLink :: A.Parser Inlines
-pLink = do
+pLink :: ReferenceMap -> A.Parser Inlines
+pLink refmap = do
   lab <- pLinkLabel
-  refmap <- linkReferences <$> getState
   let lab' = parseInlines refmap lab
-  pInlineLink lab' <|> pReferenceLink lab lab'
+  pInlineLink lab' <|> pReferenceLink refmap lab lab'
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
 pInlineLink :: Inlines -> A.Parser Inlines
-pInlineLink lab = try $ do
-  char '('
-  pSp
+pInlineLink lab = A.try $ do
+  A.char '('
+  scanSpaces
   url <- pLinkUrl
-  tit <- option "" $ try $ pSpnl *> pLinkTitle <* pSp
-  char ')'
+  tit <- A.option "" $ A.try $ scanSpnl *> pLinkTitle <* scanSpaces
+  A.char ')'
   return $ singleton $ Link lab url tit
+
+pReferenceLink :: ReferenceMap -> Text -> Inlines -> A.Parser Inlines
+pReferenceLink refmap rawlab lab = mzero -- TODO
+{-
 
 pReferenceLink :: Text -> Inlines -> P Inlines
 pReferenceLink rawlab lab = try $ do
