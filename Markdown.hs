@@ -297,13 +297,14 @@ withBlockScanner scanner parser = do
   modify $ \st -> st{ blockScanners = scanners }
   return result
 
-data ScanType  = BlockScan | LineScan deriving Eq
-data OnSuccess = Peek | Consume deriving Eq
+data ScanType     = BlockScan | LineScan deriving Eq
+data OnSuccess    = Peek | Consume deriving Eq
+data HandleBlanks = SkipBlanks | ReturnBlanks deriving Eq
 
 -- Apply scanners to next line, and return result if they match.
 -- Skip over empty lines if blockStart.
-nextLine :: OnSuccess -> ScanType -> BlockParser (Maybe Text)
-nextLine onSuccess scanType = do
+nextLine :: OnSuccess -> ScanType -> HandleBlanks -> BlockParser (Maybe Text)
+nextLine onSuccess scanType handleBlanks = do
   lns <- gets inputLines
   scanners <- gets $ case scanType of
                            BlockScan -> blockScanners
@@ -311,14 +312,14 @@ nextLine onSuccess scanType = do
   case lns of
        []     -> return Nothing
        (x:xs)
-         | isEmptyLine x && scanType == BlockScan ->
+         | isEmptyLine x && handleBlanks == SkipBlanks ->
               case xs of -- two blank line stops a block
                    (y:ys) | isEmptyLine y -> do
-                     modify $ \st -> st{ inputLines = ys }
+                     modify $ \st -> st{ inputLines = dropWhile isEmptyLine ys }
                      return Nothing
                    _      -> do
                      modify $ \st -> st{ inputLines = xs }
-                     nextLine onSuccess scanType
+                     nextLine onSuccess scanType handleBlanks
          | otherwise     -> do
                   case applyScanners scanners x of
                        Just x' -> do
@@ -350,7 +351,8 @@ isEmptyLine = T.all isSpChar
         isSpChar _    = False
 
 blocksParser :: BlockParser Blocks
-blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
+blocksParser =
+  nextLine Peek BlockScan SkipBlanks >>= maybe (return empty) doLine
  where doLine ln  = do
           next <- tryScanners
                     [ (scanBlockquoteStart, blockquoteParser)
@@ -379,12 +381,12 @@ indentedCodeBlockParser =
   withLineScanner (scanIndentSpace <|> scanBlankline) $
   singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse <$> getLines
- where getLines = nextLine Consume LineScan >>=
+ where getLines = nextLine Consume BlockScan ReturnBlanks >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
 
 atxHeaderParser :: BlockParser Blocks
 atxHeaderParser = do
-  next <- maybe "" T.strip <$> nextLine Consume BlockScan
+  next <- maybe "" T.strip <$> nextLine Consume BlockScan SkipBlanks
   let next'  = T.strip $ T.dropAround (=='#') next
   let inside = if "\\" `T.isSuffixOf` next' && "#" `T.isSuffixOf` next
                        then next' <> "#"  -- escaped final #
@@ -396,14 +398,14 @@ atxHeaderParser = do
 
 codeFenceParser :: BlockParser Blocks
 codeFenceParser = do
-  next <- maybe "" id <$> nextLine Consume BlockScan
+  next <- maybe "" id <$> nextLine Consume BlockScan ReturnBlanks
   case A.parseOnly codeFenceParserLine next of
        Left _  -> return $ singleton $ Para $ singleton $ Str next
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLines fence
    where getLines fence = do
-           mbln <- nextLine Consume LineScan
+           mbln <- nextLine Consume LineScan ReturnBlanks
            case mbln of
                 Nothing -> return []
                 Just ln
@@ -418,9 +420,9 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
 
 referenceParser :: BlockParser Blocks
 referenceParser = do
-  first <- maybe "" id <$> nextLine Consume BlockScan
+  first <- maybe "" id <$> nextLine Consume BlockScan SkipBlanks
   let getLines = do
-             mbln <- nextLine Consume LineScan
+             mbln <- nextLine Consume LineScan ReturnBlanks
              case mbln of
                   Nothing  -> return []
                   Just ln  -> (ln:) <$> getLines
@@ -446,7 +448,7 @@ pReference = do
 
 listParser :: BlockParser Blocks
 listParser = do
-  first <- maybe "" id <$> nextLine Consume BlockScan
+  first <- maybe "" id <$> nextLine Consume BlockScan SkipBlanks
   let listStart = do
         initialSpaces <- A.takeWhile (==' ')
         listType <- parseListMarker
@@ -459,25 +461,41 @@ listParser = do
   let scanContentsIndent = () <$ A.count
          (T.length initialSpaces + listMarkerWidth listType) (A.skip (==' '))
   let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
-  withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
-                       scanListStart Nothing)
-    $ withBlockScanner scanContentsIndent
-      $ do
-        return empty
+  items <- listItemsParser starter scanContentsIndent
+  let isTight = False -- TODO
+  return $ singleton $ List isTight listType items
+
+listItemsParser :: Scanner -> Scanner -> BlockParser [Blocks]
+listItemsParser starter scanContentsIndent = undefined
 
 {-
-  sps <- pNonindentSpaces
-  col <- sourceColumn <$> getPosition
-  listType <- pListMarker
-  col' <- sourceColumn <$> getPosition
-  let sublistIndent = () <$ count (col' - col - 1) (char ' ')
-  let starter = try $ string sps *> pListStart listType
-  let listItemBlocks =
-        pBlocks (notFollowedBy
-                  (try $ string sps >> sublistIndent >> pSp >> pListMarker))
-                (try $ (string sps >> sublistIndent)
-                   <|> lookAhead (try $ pBlankline *> notFollowedBy pBlankline))
-  first <- listItemBlocks
+  first <- maybe "" id <$> nextLine Consume BlockScan SkipBlanks
+  let listStart = do
+        initialSpaces <- A.takeWhile (==' ')
+        listType <- parseListMarker
+        rest <- A.takeText
+        return (initialSpaces, listType, rest)
+  (initialSpaces, listType, rest) <-
+        case A.parseOnly listStart first of
+             Left _   -> fail "Could not parse list marker"
+             Right r  -> return r
+  let scanContentsIndent = () <$ A.count
+         (T.length initialSpaces + listMarkerWidth listType) (A.skip (==' '))
+  let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
+  let listItemBlocks = withBlockScanner scanContentsIndent
+       $ withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
+                            scanListStart Nothing) $ blocksParser
+  -- TODO some abstraction for tight checking
+  -- let isTight = ...
+  let listItem =
+        -- blocksep?
+        -- check for tight?
+        starter >> listItemBlocks
+  rest <- many listItem
+  let isTight' = False -- if null rest then True else isTight
+  return $ singleton $ List isTight' listType (first:rest)
+-}
+{-
   isTight <- (== 0) <$> (lookAhead pBlockSep <|> return 0)
   let listItem = try $ do
         num <- pBlockSep
@@ -493,10 +511,10 @@ listParser = do
 
 parseLines :: BlockParser Blocks
 parseLines = do
-  next <- nextLine Consume BlockScan
+  next <- nextLine Consume BlockScan SkipBlanks
   processLines <$> maybe (return []) (\x ->
                           (x:) <$> (withLineScanner paraLine getLines)) next
- where getLines = nextLine Consume LineScan >>=
+ where getLines = nextLine Consume LineScan ReturnBlanks >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        paraLine =   nfb scanBlankline
                  >> nfb scanIndentSpace
