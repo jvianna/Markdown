@@ -358,19 +358,15 @@ parseIndentedCodeBlock =
 
 parseAtxHeader :: BlockParser Blocks
 parseAtxHeader = do
-  next <- maybe "" id <$> nextLine Consume BlockScan
+  next <- maybe "" T.strip <$> nextLine Consume BlockScan
+  let next'  = T.strip $ T.dropAround (=='#') next
+  let inside = if "\\" `T.isSuffixOf` next' && "#" `T.isSuffixOf` next
+                       then next' <> "#"  -- escaped final #
+                       else next'
   case A.parseOnly parseAtxHeaderStart next of
         Left _  -> return $ singleton $ Para $ singleton $ Str next
         Right lev -> return
-                     $ singleton . Header lev . singleton . Markdown
-                     $ stripClosingHashes next
-   where stripClosingHashes = T.reverse . stripLeadingHashes . T.reverse
-         stripLeadingHashes ln = case T.uncons ln of
-                                      Just ('#',rest)
-                                        | "\\" `T.isPrefixOf` rest -> ln
-                                           -- escaped \#
-                                        | otherwise -> stripLeadingHashes rest
-                                      _ -> ln
+                     $ singleton . Header lev . singleton . Markdown $ inside
 
 parseCodeFence :: BlockParser Blocks
 parseCodeFence = do
