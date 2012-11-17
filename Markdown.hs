@@ -321,10 +321,18 @@ nextLine onSuccess scanType = do
                           return $ Just x'
                        Nothing -> return Nothing
 
+tabFilter :: Int -> Text -> Text
+tabFilter tabstop = T.concat . pad . T.split (== '\t')
+  where pad []  = []
+        pad [t] = [t]
+        pad (t:ts) = let tl = T.length t
+                         n  = tl + tabstop - (tl `mod` tabstop)
+                         in  T.justifyLeft n ' ' t : pad ts
+
 parseBlocks :: Text -> (Blocks, ReferenceMap)
 parseBlocks t = (bs, references s)
   where (bs, s) = runState blocksParser
-                    BlockParserState{ inputLines = T.lines t
+                    BlockParserState{ inputLines = map (tabFilter 4) $ T.lines t
                                     , references = M.empty
                                     , lineScanners = []
                                     , blockScanners = []
