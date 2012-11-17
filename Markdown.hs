@@ -31,7 +31,7 @@ QUESTIONS
 * two blank lines end a list?
    YES
 * two blockquotes w blank line between
-   YES
+   NO - but two blank lines separate blockquotes, just like lists
 * store entities as chars or entities?
    CURRENTLY AS ENTITIES
 * should we retain user line breaks?
@@ -103,6 +103,17 @@ data NumWrapper = PeriodFollowing | ParenFollowing | ParensAround
                 deriving (Eq,Show)
 
 data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
+
+listMarkerWidth :: ListType -> Int
+listMarkerWidth (Bullet _) = 1
+listMarkerWidth (Numbered wrap n) =
+  (if wrap == ParensAround then 2 else 1) +
+  case n of
+       _ | n < 10    -> 1
+         | n < 100   -> 2
+         | n < 1000  -> 3
+         | n < 10000 -> 4
+         | otherwise -> 5
 
 -- Defining the parser.
 
@@ -212,16 +223,21 @@ isBulletChar '+' = True
 isBulletChar '*' = True
 isBulletChar _   = False
 
-scanListMarker :: Scanner
-scanListMarker = () <$ parseListMarker
+scanListStart :: Maybe ListType -> A.Parser ()
+scanListStart Nothing = () <$ parseListMarker
+scanListStart (Just (Bullet   c)) = A.try $ do
+  marker <- parseBullet
+  case marker of
+        Bullet c' | c == c' -> return ()
+        _                   -> fail "Change in list style"
+scanListStart (Just (Numbered w _)) = A.try $ do
+  marker <- parseListNumber
+  case marker of
+        Numbered w' _ | w == w' -> return ()
+        _                       -> fail "Change in list style"
 
 parseListMarker :: A.Parser ListType
-parseListMarker = do
-  listType <- parseBullet <|> parseListNumber
-  return listType
-
-scanListStart :: Scanner
-scanListStart = scanNonindentSpaces >> scanListMarker
+parseListMarker = parseBullet <|> parseListNumber
 
 parseBullet :: A.Parser ListType
 parseBullet = do
@@ -295,9 +311,14 @@ nextLine onSuccess scanType = do
   case lns of
        []     -> return Nothing
        (x:xs)
-         | isEmptyLine x && scanType == BlockScan -> do
-                  modify $ \st -> st{ inputLines = xs }
-                  nextLine onSuccess scanType
+         | isEmptyLine x && scanType == BlockScan ->
+              case xs of -- two blank line stops a block
+                   (y:ys) | isEmptyLine y -> do
+                     modify $ \st -> st{ inputLines = ys }
+                     return Nothing
+                   _      -> do
+                     modify $ \st -> st{ inputLines = xs }
+                     nextLine onSuccess scanType
          | otherwise     -> do
                   case applyScanners scanners x of
                        Just x' -> do
@@ -338,7 +359,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                     , (scanAtxHeaderStart, atxHeaderParser)
                     , (scanCodeFenceLine, codeFenceParser)
                     , (scanReference, referenceParser)
-                    -- , (scanListStart, listParser)
+                    -- , (scanNonindentSpaces >> scanListStart, listParser)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
@@ -382,7 +403,7 @@ codeFenceParser = do
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLines fence
    where getLines fence = do
-           mbln <- nextLine Consume BlockScan
+           mbln <- nextLine Consume LineScan
            case mbln of
                 Nothing -> return []
                 Just ln
@@ -423,14 +444,6 @@ pReference = do
   A.endOfInput
   return (lab, url, tit)
 
-parseListStart :: ListType -> A.Parser ()
-parseListStart (Bullet   c) = () <$ nfb scanHRuleLine <* A.char c <* scanSpace
-parseListStart (Numbered w _) = A.try $ do
-  marker <- parseListNumber
-  case marker of
-        Numbered w' _ | w == w' -> return ()
-        _                       -> fail "Change in list style"
-
 listParser :: BlockParser Blocks
 listParser = do
   first <- maybe "" id <$> nextLine Consume BlockScan
@@ -443,8 +456,16 @@ listParser = do
         case A.parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
-  return empty
-  {-
+  let scanContentsIndent = () <$ A.count
+         (T.length initialSpaces + listMarkerWidth listType) (A.skip (==' '))
+  let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
+  withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
+                       scanListStart Nothing)
+    $ withBlockScanner scanContentsIndent
+      $ do
+        return empty
+
+{-
   sps <- pNonindentSpaces
   col <- sourceColumn <$> getPosition
   listType <- pListMarker
@@ -482,7 +503,7 @@ parseLines = do
                  >> nfb scanBlockquoteStart
                  >> nfb scanAtxHeaderStart
                  >> nfb scanCodeFenceLine
-                 >> nfb (scanSpaces >> scanListMarker)
+                 >> nfb (scanSpaces >> scanListStart Nothing)
        markdown = singleton . Markdown . T.strip
        processLines [] = empty
        processLines ws =
