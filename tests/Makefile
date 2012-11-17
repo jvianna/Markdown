@@ -5,7 +5,8 @@ PROG ?= ../bin/markdown
 all: $(ACTUALS)
 	for f in $(ACTUALS); do \
 	  diff -u $${f%.actual.html}.html $$f ; \
-	  [ $$? -eq 0 ] && echo "✓ $${f%.actual.html}" ; \
+	  [ $$? -eq 0 ] && echo "✓ $${f%.actual.html}" || \
+	  echo "✘ $${f%.actual.html}"; \
 	done
 
 %.actual.html: %.markdown $(PROG)
