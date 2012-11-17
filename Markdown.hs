@@ -215,11 +215,10 @@ isBulletChar _   = False
 scanListMarker :: Scanner
 scanListMarker = () <$ parseListMarker
 
-parseListMarker :: A.Parser (ListType, Text)
+parseListMarker :: A.Parser ListType
 parseListMarker = do
   listType <- parseBullet <|> parseListNumber
-  rest <- A.takeText
-  return (listType, rest)
+  return listType
 
 scanListStart :: Scanner
 scanListStart = scanNonindentSpaces >> scanListMarker
@@ -427,10 +426,15 @@ pReference = do
 listParser :: BlockParser Blocks
 listParser = do
   first <- maybe "" id <$> nextLine Consume BlockScan
-  let listStart = scanNonindentSpaces >> parseListMarker
-  (listType, rest) <- case A.parseOnly listStart first of
-                           Left _   -> fail "Could not parse list marker"
-                           Right r  -> return r
+  let listStart = do
+        initialSpaces <- A.takeWhile (==' ')
+        listType <- parseListMarker
+        rest <- A.takeText
+        return (initialSpaces, listType, rest)
+  (initialSpaces, listType, rest) <-
+        case A.parseOnly listStart first of
+             Left _   -> fail "Could not parse list marker"
+             Right r  -> return r
   return empty
   {-
   sps <- pNonindentSpaces
