@@ -625,7 +625,7 @@ pInline refmap =
        <|> pEnclosure '*' refmap
        <|> pEnclosure '_' refmap
        <|> pLink refmap
-       -- <|> pImage refmap
+       <|> pImage refmap
        <|> pCode
        <|> pEntity
        <|> pRawHtml
@@ -779,15 +779,14 @@ pReferenceLink rawlab lab = try $ do
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
 
-pImage :: P Inlines
-pImage = try $ do
-  char '!'
-  let linkToImage (Link lab url tit) = Image lab url tit
-      linkToImage x                  = x
-  fmap linkToImage <$> pLink
-
 -}
 
+pImage :: ReferenceMap -> A.Parser Inlines
+pImage refmap = A.try $ do
+  A.char '!'
+  let linkToImage (Link lab url tit) = Image lab url tit
+      linkToImage x                  = x
+  fmap linkToImage <$> pLink refmap
 
 pEntity :: A.Parser Inlines
 pEntity = A.try $ do
