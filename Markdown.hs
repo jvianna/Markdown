@@ -138,15 +138,7 @@ scanBlockquoteStart =
   scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
 scanIndentSpace :: Scanner
-scanIndentSpace =
-  scanChar '\t' <|>
-    A.try (scanChar ' ' >>
-      (scanChar '\t' <|>
-        A.try (scanChar ' ' >>
-          (scanChar '\t' <|>
-            A.try (scanChar ' ' >>
-              (scanChar '\t' <|>
-                scanChar ' '))))))
+scanIndentSpace = scanSpace >> scanSpace >> scanSpace >> scanSpace
 
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
@@ -160,14 +152,14 @@ scanChar :: Char -> Scanner
 scanChar c = A.char c >> return ()
 
 scanBlankline :: Scanner
-scanBlankline = A.skipWhile A.isHorizontalSpace  *> A.endOfInput
+scanBlankline = A.skipWhile (==' ') *> A.endOfInput
 
 scanSpace :: Scanner
-scanSpace = () <$ A.satisfy A.isHorizontalSpace
+scanSpace = () <$ A.satisfy (==' ')
 
 -- 0 or more spaces
 scanSpaces :: Scanner
-scanSpaces = A.skipWhile A.isHorizontalSpace
+scanSpaces = A.skipWhile (==' ')
 
 scanSpnl :: Scanner
 scanSpnl = scanSpaces *> opt (A.endOfLine *> scanSpaces)
@@ -198,7 +190,7 @@ scanHRuleLine = A.try $ do
   scanNonindentSpaces
   c <- A.satisfy (\c -> c == '*' || c == '-' || c == '_')
   A.count 2 $ A.try $ scanSpaces >> A.char c
-  A.skipWhile (\x -> A.isHorizontalSpace x || x == c)
+  A.skipWhile (\x -> x == ' ' || x == c)
   A.endOfInput
   return ()
 
@@ -341,7 +333,6 @@ parseBlocks t = (bs, references s)
 isEmptyLine :: Text -> Bool
 isEmptyLine = T.all isSpChar
   where isSpChar ' '  = True
-        isSpChar '\t' = True
         isSpChar _    = False
 
 blocksParser :: BlockParser Blocks
@@ -543,7 +534,6 @@ pNonspaceChar :: A.Parser Char
 pNonspaceChar = pSatisfy isNonspaceChar
   where isNonspaceChar ' '  = False
         isNonspaceChar '\n' = False
-        isNonspaceChar '\t' = False
         isNonspaceChar '\r' = False
         isNonspaceChar _    = True
 
@@ -596,7 +586,7 @@ pLinkUrl = A.try $ do
   if inPointy
      then A.takeWhile (A.notInClass "\r\n>") <* A.char '>'
      else T.concat <$> many (regChunk <|> parenChunk)
-    where regChunk = A.takeWhile1 (A.notInClass " \t\r\n()")
+    where regChunk = A.takeWhile1 (A.notInClass " \r\n()")
           parenChunk = inParens . T.concat <$> (A.char '(' *>
                          A.manyTill (regChunk <|> parenChunk) (A.char ')'))
           inParens x = "(" <> x <> ")"
