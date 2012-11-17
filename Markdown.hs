@@ -37,7 +37,6 @@ QUESTIONS
 
 module Markdown {-(parseMarkdown, renderBlocks)-} where
 import qualified Data.Map as M
-import qualified Data.Set as Set
 import Control.Monad.State
 import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
@@ -486,34 +485,7 @@ pNonspaceChar = pSatisfy isNonspaceChar
         isNonspaceChar '\r' = False
         isNonspaceChar _    = True
 
--- | Parses one of a list of strings (tried in order).
-oneOfStrings :: [String] -> A.Parser String
-oneOfStrings []   = fail "no strings"
-oneOfStrings strs = do
-  c <- A.anyChar
-  let strs' = [xs | (x:xs) <- strs, x == c]
-  case strs' of
-       []  -> fail "not found"
-       z | "" `elem` z -> return [c]
-         | otherwise   -> (c:) <$> oneOfStrings strs'
-
 {-
-
--- | Parses an email address; returns original and corresponding
--- escaped mailto: URI.
-emailAddress :: P (Text, Text)
-emailAddress = try $ do
-  firstLetter <- alphaNum
-  restAddr <- many emailChar
-  let addr = firstLetter:restAddr
-  char '@'
-  dom <- domain
-  let full = addr ++ '@':dom
-  return (T.pack full, T.pack $ escapeURIString (not . isSpace)
-                        $ "mailto:" ++ full)
- where emailChar = alphaNum <|> oneOf "-+_."
-       domainChar = alphaNum <|> char '-'
-       domain = intercalate "." <$> (many1 domainChar `sepBy1` (char '.'))
 
 data HtmlTagType = Opening Text | Closing Text | SelfClosing Text
 
@@ -663,8 +635,7 @@ pInline refmap =
        -- <|> pImage refmap
        <|> pCode
        <|> pEntity
-       -- <|> pAutolink
-       -- <|> pRawHtml
+       <|> pInPointyBrackets
        <|> pSym
 
 pSpace :: A.Parser Inlines
@@ -680,15 +651,15 @@ pStr = do
   let strChunk = A.takeWhile1 isAlphaNum
   let underscore = A.string "_"
   s <- T.intercalate "_" <$> strChunk `A.sepBy1` underscore
-  if s `Set.member` uriProtocols
+  if s `elem` uriProtocols
      then A.try (pUri s) <|> return (singleton $ Str s)
      else return (singleton $ Str s)
 
 pSym :: A.Parser Inlines
 pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
 
-uriProtocols :: Set.Set Text
-uriProtocols = Set.fromList
+uriProtocols :: [Text]
+uriProtocols =
   [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
 
 pUri :: Text -> A.Parser Inlines
@@ -713,12 +684,14 @@ pUri protocol = do
   let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
   rest <- T.concat <$> A.many1 uriChunk
   -- now see if they amount to an absolute URI
-  let escapeURI = escapeURIString (not . isSpace)
   let rawuri = protocol <> ":" <> rest
-  case parseURI (escapeURI $ T.unpack rawuri) of
+  case parseURI (T.unpack $ escapeUri rawuri) of
        Just uri' -> return $ singleton $ Link (singleton $ Str rawuri)
-                             (T.pack $ show uri') (T.empty)
+                                  (T.pack $ show uri') (T.empty)
        Nothing   -> fail "not a URI"
+
+escapeUri :: Text -> Text
+escapeUri = T.pack . escapeURIString (not . isSpace) . T.unpack
 
 isEnclosureChar :: Char -> Bool
 isEnclosureChar '*' = True
@@ -813,9 +786,6 @@ pImage = try $ do
       linkToImage x                  = x
   fmap linkToImage <$> pLink
 
-pRawHtml :: P Inlines
-pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
-
 -}
 
 
@@ -842,16 +812,44 @@ pHexEntity = A.try $ do
   res <- A.takeWhile1 isHexDigit
   return $ "#" <> T.singleton x <> res
 
-{-
+pInPointyBrackets :: A.Parser Inlines
+pInPointyBrackets = A.try $ do
+  A.char '<'
+  t <- A.takeWhile1 (/='>')
+  A.char '>'
+  return $ case t of
+                _ | startsWithProtocol t -> autoLink t
+                  | T.any (=='@') t && T.all (/=' ') t -> emailLink t
+                  | isHtmlTag t -> htmlTag t
+                  | otherwise   -> fail "Unknown contents of <>"
 
-pAutolink :: P Inlines
-pAutolink = try $ char '<' *> (pUri <|> pEmailAddress) <* char '>'
+scanMatches :: Scanner -> Text -> Bool
+scanMatches scanner t =
+  case A.parseOnly scanner t of
+       Right ()   -> True
+       _          -> False
 
-pEmailAddress :: P Inlines
-pEmailAddress = do
-  (orig,escaped) <- emailAddress
-  return $ singleton $ Link (singleton $ Str orig) escaped (T.empty)
--}
+startsWithProtocol :: Text -> Bool
+startsWithProtocol =
+  scanMatches $ A.choice (map A.string uriProtocols) >> A.skip (== ':')
+
+-- TODO just temporary, doesn't handle > in quoted attribute.
+-- better use snd <$> pHtmlTag
+isHtmlTag :: Text -> Bool
+isHtmlTag =
+  scanMatches $ A.satisfy isTagChar *> A.skipWhile isAlphaNum
+                *> (A.skip isSpace <|> A.endOfInput)
+  where isTagChar c = isLetter c || c == '/' || isDigit c || c == '?' || c == '!'
+
+autoLink :: Text -> Inlines
+autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
+
+emailLink :: Text -> Inlines
+emailLink t = singleton $ Link (singleton $ Str t)
+                               (escapeUri $ "mailto:" <> t) (T.empty)
+
+htmlTag :: Text -> Inlines
+htmlTag t = singleton $ RawHtml $ "<" <> t <> ">"
 
 -- blocks
 
