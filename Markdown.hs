@@ -65,6 +65,8 @@ import Text.Blaze.Html hiding(contents)
 
 -- for debugging
 import Debug.Trace
+tr s = trace s (return ())
+
 
 -- Replacement for Parsec's 'sepBy1', which does not have the @try@
 -- and so does not behave as I want it to.
@@ -654,7 +656,8 @@ pInline :: ReferenceMap -> A.Parser Inlines
 pInline refmap =
            pSpace
        <|> pStr
-       <|> pEnclosure refmap
+       <|> pEnclosure '*' refmap
+       <|> pEnclosure '_' refmap
        -- <|> pStrong '*' refmap
        -- <|> pStrong '_' refmap
        -- <|> pEmph '*' refmap
@@ -725,41 +728,50 @@ isEnclosureChar '*' = True
 isEnclosureChar '_' = True
 isEnclosureChar _   = False
 
-pEnclosure :: ReferenceMap -> A.Parser Inlines
-pEnclosure refmap = do
-  c <- A.satisfy isEnclosureChar
-  (A.char c >> ((A.char c >> pThree c refmap) <|> pTwo c refmap))
-    <|> pOne c refmap
+pEnclosure :: Char -> ReferenceMap -> A.Parser Inlines
+pEnclosure c refmap = do
+  cs <- A.takeWhile1 (== c)
+  (Str cs <|) <$> pSpace
+   <|> case T.length cs of
+            3  -> pThree c refmap
+            2  -> pTwo c refmap empty
+            1  -> pOne c refmap empty
+            _  -> return (singleton $ Str cs)
+
+-- singleton sequence or empty if contents are empty
+single :: (Inlines -> Inline) -> Inlines -> Inlines
+single constructor ils = if Seq.null ils
+                            then empty
+                            else singleton (constructor ils)
 
 -- parse inlines til you hit a c, and emit Emph.
 -- if you never hit a c, emit '*' + inlines parsed.
-pOne :: Char -> ReferenceMap -> A.Parser Inlines
-pOne c refmap = do
-  nfb A.space
+pOne :: Char -> ReferenceMap -> Inlines -> A.Parser Inlines
+pOne c refmap prefix = do
   contents <- msum <$> many ( (nfb (A.char c) >> pInline refmap)
-                             <|> (A.string (T.pack [c,c]) >> pTwo c refmap)
-                              )
-  (A.char c >> return (singleton $ Emph contents))
-    <|> return (singleton (Str (T.singleton c)) <> contents)
-
+                             <|> (A.try $ A.string (T.pack [c,c]) >>
+                                  nfb (A.char c) >> pTwo c refmap prefix) )
+  (A.char c >> return (single Emph $ prefix <> contents))
+    <|> return (singleton (Str (T.singleton c)) <> (prefix <> contents))
 
 -- parse inlines til you hit two c's, and emit Strong.
 -- if you never do hit two c's, emit '**' plus + inlines parsed.
-pTwo :: Char -> ReferenceMap -> A.Parser Inlines
-pTwo c refmap = do
-  nfb A.space
+pTwo :: Char -> ReferenceMap -> Inlines -> A.Parser Inlines
+pTwo c refmap prefix = do
   let ender = A.string $ T.pack [c,c]
   contents <- msum <$> many (nfb ender >> pInline refmap)
-  (ender >> return (singleton $ Strong contents))
-    <|> return (singleton (Str $ T.pack [c,c]) <> contents)
+  (ender >> return (single Strong $ prefix <> contents))
+    <|> return (singleton (Str $ T.pack [c,c]) <> (prefix <> contents))
 
 -- parse inlines til you hit one c or a sequence of two c's.
 -- If one c, emit Emph and then parse pTwo.
 -- if two c's, emit Strong and then parse pOne.
 pThree :: Char -> ReferenceMap -> A.Parser Inlines
 pThree c refmap = do
-  nfb A.space
-  undefined
+  contents <- msum <$> (many (nfb (A.char c) >> pInline refmap))
+  (A.string (T.pack [c,c]) >> (pOne c refmap (single Strong contents)))
+   <|> (A.char c >> (pTwo c refmap (single Emph contents)))
+   <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
 {-
 
