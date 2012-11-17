@@ -41,7 +41,7 @@ import qualified Data.Set as Set
 import Control.Monad.State
 import Data.List (intercalate)
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
-                    isDigit, isAlphaNum)
+                    isDigit, isHexDigit, isAlphaNum, isLetter)
 import Network.URI (parseURI, URI(..), isAllowedInURI, escapeURIString)
 import Data.Monoid ((<>))
 import Data.Foldable (foldMap, toList)
@@ -662,7 +662,7 @@ pInline refmap =
        -- <|> pLink refmap
        -- <|> pImage refmap
        <|> pCode
-       -- <|> pEntity
+       <|> pEntity
        -- <|> pAutolink
        -- <|> pRawHtml
        <|> pSym
@@ -816,28 +816,33 @@ pImage = try $ do
 pRawHtml :: P Inlines
 pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
 
-pEntity :: P Inlines
-pEntity = try $ do
-  char '&'
+-}
+
+
+pEntity :: A.Parser Inlines
+pEntity = A.try $ do
+  A.char '&'
   res <- pCharEntity <|> pDecEntity <|> pHexEntity
-  char ';'
-  return $ singleton $ Entity $ T.pack $ '&':res ++ ";"
+  A.char ';'
+  return $ singleton $ Entity $ "&" <> res <> ";"
 
-pCharEntity :: P [Char]
-pCharEntity = many1 letter
+pCharEntity :: A.Parser Text
+pCharEntity = A.takeWhile1 (\c -> isAscii c && isLetter c)
 
-pDecEntity :: P [Char]
-pDecEntity = try $ do
-  char '#'
-  res <- many1 digit
-  return $ '#':res
+pDecEntity :: A.Parser Text
+pDecEntity = A.try $ do
+  A.char '#'
+  res <- A.takeWhile1 isDigit
+  return $ "#" <> res
 
-pHexEntity :: P [Char]
-pHexEntity = try $ do
-  char '#'
-  x <- oneOf "Xx"
-  res <- many1 hexDigit
-  return $ '#':x:res
+pHexEntity :: A.Parser Text
+pHexEntity = A.try $ do
+  A.char '#'
+  x <- A.char 'X' <|> A.char 'x'
+  res <- A.takeWhile1 isHexDigit
+  return $ "#" <> T.singleton x <> res
+
+{-
 
 pAutolink :: P Inlines
 pAutolink = try $ char '<' *> (pUri <|> pEmailAddress) <* char '>'
