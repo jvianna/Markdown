@@ -13,6 +13,7 @@ QUESTIONS
 
 * nested quotes in link title?  seems silly, but some impls do?
 * limit html blocks to list of html block tags?
+* how exactly do html blocks work?
 * markdown=1 attribute?
 * allow blank lines not to separate two code blocks?
    Markdown.pl fuses them. is this desirable?
@@ -33,9 +34,6 @@ QUESTIONS
    YES
 * store entities as chars or entities?
    CURRENTLY AS ENTITIES
-* how exactly do html blocks work?
-* char encoding?
-* tab handling?
 * should we retain user line breaks?
 
 -}
@@ -81,7 +79,6 @@ data Block = Para Inlines
            | CodeBlock CodeAttr Text
            | HtmlBlock Text
            deriving Show
--- TODO raw html
 
 type Blocks = Seq Block
 
