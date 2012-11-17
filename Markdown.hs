@@ -227,10 +227,13 @@ isBulletChar '*' = True
 isBulletChar _   = False
 
 scanListMarker :: Scanner
-scanListMarker = () <$ listParserMarker
+scanListMarker = () <$ parseListMarker
 
-listParserMarker :: A.Parser ListType
-listParserMarker = parseBullet <|> listParserNumber
+parseListMarker :: A.Parser (ListType, Text)
+parseListMarker = do
+  listType <- parseBullet <|> parseListNumber
+  rest <- A.takeText
+  return (listType, rest)
 
 scanListStart :: Scanner
 scanListStart = scanNonindentSpaces >> scanListMarker
@@ -242,15 +245,15 @@ parseBullet = do
   nfb $ A.count 2 $ A.try $ scanSpaces >> A.char c -- hrule
   return $ Bullet c
 
-listParserNumber :: A.Parser ListType
-listParserNumber =
-  (listParserNumberDig <|> listParserNumberPar) <* scanSpace <* scanSpaces
-  where listParserNumberDig = A.try $ do
+parseListNumber :: A.Parser ListType
+parseListNumber =
+  (parseListNumberDig <|> parseListNumberPar) <* scanSpace <* scanSpaces
+  where parseListNumberDig = A.try $ do
            num <- A.decimal
            wrap <-  PeriodFollowing <$ A.char '.'
                 <|> ParenFollowing <$ A.char ')'
            return $ Numbered wrap num
-        listParserNumberPar = A.try $ do
+        parseListNumberPar = A.try $ do
            A.char '('
            num <- A.decimal
            A.char ')'
@@ -343,7 +346,7 @@ blocksParser = nextLine Peek BlockScan >>= maybe (return empty) doLine
                     , (scanAtxHeaderStart, atxHeaderParser)
                     , (scanCodeFenceLine, codeFenceParser)
                     , (scanReference, referenceParser)
-                    , (scanListStart, listParser)
+                    -- , (scanListStart, listParser)
                     ] ln
           rest <- blocksParser
           return (next <> rest)
@@ -430,7 +433,12 @@ pReference = do
 
 listParser :: BlockParser Blocks
 listParser = do
-  fail "undefined"
+  first <- maybe "" id <$> nextLine Consume BlockScan
+  let listStart = scanNonindentSpaces >> parseListMarker
+  (listType, rest) <- case A.parseOnly listStart first of
+                           Left _   -> fail "Could not parse list marker"
+                           Right r  -> return r
+  return empty
   {-
   sps <- pNonindentSpaces
   col <- sourceColumn <$> getPosition
