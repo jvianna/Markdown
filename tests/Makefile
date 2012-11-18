@@ -5,9 +5,9 @@ PROG ?= ../bin/markdown
 
 all: $(DIFFS)
 	PASS=0;TESTS=0; \
-	for f in $(ACTUALS); do \
+	for f in $(DIFFS); do \
 	  let TESTS=TESTS+1; \
-	  if ![ -s $$f ]; then PASS=PASS+1; fi ;\
+	  [ -s $$f ] || let PASS=PASS+1; \
 	done; \
 	echo "\x1b[1m$$PASS of $$TESTS tests passed.\x1b[0m"; \
 	if [ $$TESTS -eq $$PASS ]; then exit 0; else exit 1; fi
