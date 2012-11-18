@@ -53,7 +53,6 @@ import qualified Data.Sequence as Seq
 
 import qualified Data.Text as T
 import Data.Text ( Text )
-
 import Data.Attoparsec.Text
 
 -- for HTML rendering
@@ -354,7 +353,7 @@ blocksParser mbln =
                     , (scanAtxHeaderStart, atxHeaderParser)
                     , (scanCodeFenceLine, codeFenceParser)
                     , (scanReference, referenceParser)
-                    -- , (scanNonindentSpaces >> scanListStart, listParser)
+                    , (scanNonindentSpaces >> scanListStart Nothing, listParser)
                     , (return (), parseLines)
                     ] ln
           rest <- blocksParser Nothing
@@ -440,9 +439,8 @@ pReference = do
   endOfInput
   return (lab, url, tit)
 
-listParser :: BlockParser Blocks
-listParser = do
-  first <- maybe "" id <$> nextLine Consume BlockScan
+listParser :: Text -> Text -> BlockParser Blocks
+listParser first first' = do
   let listStart = do
         initialSpaces <- takeWhile (==' ')
         listType <- parseListMarker
@@ -455,12 +453,27 @@ listParser = do
   let scanContentsIndent = () <$ count
          (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
   let starter = try $ string initialSpaces *> scanListStart (Just listType)
-  items <- listItemsParser starter scanContentsIndent
-  let isTight = False -- TODO
-  return $ singleton $ List isTight listType items
+  let blockScanner = scanContentsIndent
+  let lineScanner = nfb $
+              scanContentsIndent >> scanSpaces >> scanListStart Nothing
+  firstItem <- withBlockScanner blockScanner
+               $ withLineScanner lineScanner
+               $ blocksParser $ Just first'
+  restItems <- listItemsParser starter blockScanner lineScanner
+  let isTight = null restItems -- TODO
+  return $ singleton $ List isTight listType (firstItem:restItems)
 
-listItemsParser :: Scanner -> Scanner -> BlockParser [Blocks]
-listItemsParser starter scanContentsIndent = undefined
+listItemsParser :: Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
+listItemsParser starter blockScanner lineScanner = do
+  mbfirst <- withBlockScanner starter $ nextLine Consume BlockScan
+  case mbfirst of
+       Nothing    -> return []
+       Just first -> do
+         item <- withBlockScanner blockScanner
+                 $ withLineScanner lineScanner
+                 $ blocksParser $ Just first
+         rest <- listItemsParser starter blockScanner lineScanner
+         return (item:rest)
 
 {-
   first <- maybe "" id <$> nextLine Consume BlockScan
