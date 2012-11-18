@@ -316,7 +316,10 @@ nextLine onSuccess scanType handleBlanks = do
               case xs of -- two blank line stops a block
                    (y:ys) | isEmptyLine y -> do
                      modify $ \st -> st{ inputLines = dropWhile isEmptyLine ys }
-                     return Nothing
+                     blockScanners <- gets blockScanners
+                     if null blockScanners
+                        then nextLine onSuccess scanType handleBlanks
+                        else return Nothing -- stop parsing blocks in this elt
                    _      -> do
                      modify $ \st -> st{ inputLines = xs }
                      nextLine onSuccess scanType handleBlanks
