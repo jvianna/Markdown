@@ -217,6 +217,12 @@ codeFenceParserLine = try $ do
   endOfInput
   return (T.pack [c,c,c] <> extra, rawattr)
 
+scanHtmlBlockStart :: Scanner
+scanHtmlBlockStart = pHtmlTag >>= guard . f . fst
+  where f (Opening name) = name `Set.member` blockHtmlTags
+        f (SelfClosing name) = name `Set.member` blockHtmlTags
+        f _ = False
+
 isBulletChar :: Char -> Bool
 isBulletChar '-' = True
 isBulletChar '+' = True
@@ -662,7 +668,7 @@ pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
         pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
         pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
 
-blockHtmlTags :: Set.Set String
+blockHtmlTags :: Set.Set Text
 blockHtmlTags = Set.fromList
  [ "article", "header", "aside", "hgroup", "blockquote", "hr",
    "body", "li", "br", "map", "button", "object", "canvas", "ol",
