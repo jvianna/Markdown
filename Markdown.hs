@@ -519,6 +519,14 @@ processLines ws =
   case break isSpecialLine ws of
         (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
         (xs,(y:ys))
+          | isSetextLine y && not (null xs) ->
+              case reverse xs of
+                    []     -> error "Should not happen"
+                    [z]    -> Header (setextLevel y) (markdown z)
+                              <| processLines ys
+                    (z:zs) -> Para (markdown $ joinLines $ reverse zs)
+                           <| Header (setextLevel y) (markdown z)
+                           <| processLines ys
           | isHruleLine y  ->
               case xs of
                     []     -> HRule
@@ -526,15 +534,6 @@ processLines ws =
                     _      -> Para (markdown $ joinLines xs)
                               <| HRule
                               <| processLines ys
-          | isSetextLine y ->
-              case reverse xs of
-                    []     -> Header (setextLevel y) empty
-                              <| processLines ys
-                    [z]    -> Header (setextLevel y) (markdown z)
-                              <| processLines ys
-                    (z:zs) -> Para (markdown $ joinLines $ reverse zs)
-                           <| Header (setextLevel y) (markdown z)
-                           <| processLines ys
           | otherwise      -> error "Should not happen"
   where isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
         isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
