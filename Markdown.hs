@@ -473,12 +473,8 @@ listParser first first' = do
          (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
   let starter = try $ string initialSpaces *> scanListStart (Just listType)
   let blockScanner = scanContentsIndent <|> scanBlankline
-  let lineScanner = nfb $
-              scanContentsIndent >> scanSpaces >> scanListStart Nothing
-  -- TODO this needs work for input like
-  -- +   list
-  --     item
-  -- The problem is that the second line is interpreted as a block start.
+  let lineScanner = opt (scanContentsIndent) >>
+                    nfb (scanSpaces >> scanListStart Nothing)
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
                $ blocksParser $ Just first'
