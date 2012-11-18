@@ -381,7 +381,7 @@ indentedCodeBlockParser =
   withLineScanner (scanIndentSpace <|> scanBlankline) $
   singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse <$> getLines
- where getLines = nextLine Consume BlockScan ReturnBlanks >>=
+ where getLines = nextLine Consume LineScan ReturnBlanks >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
 
 atxHeaderParser :: BlockParser Blocks
