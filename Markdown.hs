@@ -922,8 +922,7 @@ processBlocks refmap = fmap processBl
             x -> x
 
 renderBlocks :: Blocks -> Html
-renderBlocks blocks =
-  (mconcat . intersperse blocksep . map renderBlock . toList $ blocks) <> nl
+renderBlocks = mconcat . intersperse blocksep . map renderBlock . toList
   where renderBlock :: Block -> Html
         renderBlock (Header n ils)
           | n >= 1 && n <= 5 = ([H.h1,H.h2,H.h3,H.h4,H.h5] !! (n - 1))

@@ -1,19 +1,23 @@
 module Main where
 
 import Markdown
-import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
+import Text.Blaze.Html.Renderer.Utf8 (renderHtmlToByteStringIO)
+import Text.Blaze.Html
+import Data.Monoid ((<>))
 import System.Environment
 import Data.List (partition)
 import Data.Text (Text)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as B
 import qualified Data.Text.IO as T
 import qualified Data.Text as T
 
 convert :: [String] -> Text -> IO ()
 convert opts = render . parseMarkdown
-    where render = if "-n" `elem` opts
-                      then print
-                      else BL.putStr . renderHtml . renderBlocks
+    where render x = if "-n" `elem` opts
+                        then print x
+                        else do
+                          renderHtmlToByteStringIO B.putStr
+                             $ renderBlocks x <> toHtml "\n"
 
 -- main loop
 
