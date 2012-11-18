@@ -930,7 +930,7 @@ renderBlocks = mconcat . intersperse blocksep . map renderBlock . toList
           | otherwise        = H.p (renderInlines ils)
         renderBlock (Para ils) = H.p (renderInlines ils)
         renderBlock (HRule) = H.hr
-        renderBlock (Blockquote bs) = H.blockquote $ nl <> renderBlocks bs
+        renderBlock (Blockquote bs) = H.blockquote $ nl <> renderBlocks bs <> nl
         renderBlock (CodeBlock attr t) =
           case codeLang attr of
                 Nothing   -> base
