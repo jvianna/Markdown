@@ -518,8 +518,13 @@ processLines [] = empty
 processLines ws =
   case break isSpecialLine ws of
         (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
+        ([],(y:ys))
+          | isHruleLine y  -> HRule
+                              <| processLines ys
+          | otherwise      -> Para (markdown y)
+                              <| processLines ys
         (xs,(y:ys))
-          | isSetextLine y && not (null xs) ->
+          | isSetextLine y ->
               case reverse xs of
                     []     -> error "Should not happen"
                     [z]    -> Header (setextLevel y) (markdown z)
@@ -527,11 +532,7 @@ processLines ws =
                     (z:zs) -> Para (markdown $ joinLines $ reverse zs)
                            <| Header (setextLevel y) (markdown z)
                            <| processLines ys
-          | isHruleLine y  ->
-              case xs of
-                    []     -> HRule
-                              <| processLines ys
-                    _      -> Para (markdown $ joinLines xs)
+          | isHruleLine y  -> Para (markdown $ joinLines xs)
                               <| HRule
                               <| processLines ys
           | otherwise      -> error "Should not happen"
