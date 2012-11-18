@@ -348,39 +348,37 @@ blocksParser mbln =
          | isEmptyLine ln = blocksParser Nothing
          | otherwise = do
           next <- tryScanners
-                    [ (scanBlockquoteStart, blockquoteParser ln)
-                    , (scanIndentSpace, indentedCodeBlockParser ln)
-                    , (scanAtxHeaderStart, atxHeaderParser ln)
-                    -- , (scanCodeFenceLine, codeFenceParser)
+                    [ (scanBlockquoteStart, blockquoteParser)
+                    , (scanIndentSpace, indentedCodeBlockParser)
+                    , (scanAtxHeaderStart, atxHeaderParser)
+                    , (scanCodeFenceLine, codeFenceParser)
                     -- , (scanReference, referenceParser)
                     -- , (scanNonindentSpaces >> scanListStart, listParser)
-                    , (return (), parseLines ln)
+                    , (return (), parseLines)
                     ] ln
           rest <- blocksParser Nothing
           return (next <> rest)
        tryScanners [] _            = error "Empty scanner list"
        tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
-                                          Just _  -> p
-                                          Nothing -> tryScanners rest ln
+                                          Just ln' -> p ln ln'
+                                          Nothing  -> tryScanners rest ln
 
-blockquoteParser :: Text -> BlockParser Blocks
-blockquoteParser firstLine = singleton . Blockquote <$>
+blockquoteParser :: Text -> Text -> BlockParser Blocks
+blockquoteParser _ firstLine = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
     $ withBlockScanner scanBlockquoteStart
-        $ blocksParser $ Just firstLine >>= applyScanners [scanBlockquoteStart])
+        $ blocksParser $ Just firstLine)
 
-indentedCodeBlockParser :: Text -> BlockParser Blocks
-indentedCodeBlockParser ln = do
-  ln' <- maybe (error "Indented code not indented") return $
-           applyScanners [scanIndentSpace] ln
+indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
+indentedCodeBlockParser _ ln = do
   lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
-     . reverse . dropWhile T.null . reverse $ (ln':lns)
+     . reverse . dropWhile T.null . reverse $ (ln:lns)
  where getLines = nextLine Consume LineScan >>=
-                    maybe (return []) (\ln -> (ln:) <$> getLines)
+                    maybe (return []) (\l -> (l:) <$> getLines)
 
-atxHeaderParser :: Text -> BlockParser Blocks
-atxHeaderParser ln = do
+atxHeaderParser :: Text -> Text -> BlockParser Blocks
+atxHeaderParser ln _ = do
   let lev = case A.parseOnly parseAtxHeaderStart ln of
                  Left e  -> error (show e)
                  Right n -> n
@@ -393,11 +391,10 @@ atxHeaderParser ln = do
         Right lev -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
 
-codeFenceParser :: BlockParser Blocks
-codeFenceParser = do
-  next <- maybe "" id <$> nextLine Consume BlockScan
-  case A.parseOnly codeFenceParserLine next of
-       Left _  -> return $ singleton $ Para $ singleton $ Str next
+codeFenceParser :: Text -> Text -> BlockParser Blocks
+codeFenceParser ln _ = do
+  case A.parseOnly codeFenceParserLine ln of
+       Left _  -> return $ singleton $ Para $ singleton $ Str ln
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLines fence
@@ -405,9 +402,9 @@ codeFenceParser = do
            mbln <- nextLine Consume LineScan
            case mbln of
                 Nothing -> return []
-                Just ln
-                  | fence `T.isPrefixOf` ln -> return []
-                  | otherwise -> (ln:) <$> getLines fence
+                Just l
+                  | fence `T.isPrefixOf` l -> return []
+                  | otherwise -> (l:) <$> getLines fence
 
 parseCodeAttributes :: Text -> CodeAttr
 parseCodeAttributes t = CodeAttr { codeLang = lang }
@@ -506,9 +503,9 @@ listItemsParser starter scanContentsIndent = undefined
   return $ singleton $ List isTight' listType (first:rest)
 -}
 
-parseLines :: Text -> BlockParser Blocks
-parseLines next = do
-  processLines <$> (next:) <$> withLineScanner paraLine getLines
+parseLines :: Text -> Text -> BlockParser Blocks
+parseLines _ firstLine = do
+  processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        paraLine =   nfb scanBlankline
