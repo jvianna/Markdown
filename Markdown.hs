@@ -639,11 +639,16 @@ blockHtmlTags = Set.fromList
    "h1", "h2", "h3", "h4", "h5", "h6", "video"]
 
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
-htmlBlockParser = undefined
+htmlBlockParser ln _ = do
+  undefined
+
+pHtmlComment :: Parser Text
+pHtmlComment = try $ do
+  string "<!--"
+  rest <- manyTill anyChar (try $ string "-->")
+  return $ "<!--" <> T.pack rest <> "-->"
 
 {-
--- Block-level parsers.
-
 pInBalancedTags :: P Text
 pInBalancedTags = try $ do
   (tagtype, opener) <- pHtmlTag
@@ -667,15 +672,10 @@ pInBalancedTags = try $ do
                  rest <- getRest name
                  return $ (nontag <> x') <> rest
 
+
 pHtmlBlock :: P Blocks
 pHtmlBlock = singleton . HtmlBlock <$>
   ((pInBalancedTags <|> pHtmlComment) <* skipMany pBlankline)
-
-pHtmlComment :: P Text
-pHtmlComment = try $ do
-  string "<!--"
-  rest <- manyTill anyChar (try $ string "-->")
-  return $ "<!--" <> T.pack rest <> "-->"
 
 -}
 
