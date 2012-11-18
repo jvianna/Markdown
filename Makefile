@@ -7,5 +7,5 @@ test:
 	make -C tests --quiet clean all
 
 clean:
-	-rm *.o *.hi Markdown bin/markdown bin/*.o bin/*.hi; \
-	  -@make -C tests clean
+	-@rm *.o *.hi bin/markdown bin/*.o bin/*.hi; \
+	  make -C tests clean
