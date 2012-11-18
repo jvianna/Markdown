@@ -470,6 +470,10 @@ listParser first first' = do
   let blockScanner = scanContentsIndent <|> scanBlankline
   let lineScanner = nfb $
               scanContentsIndent >> scanSpaces >> scanListStart Nothing
+  -- TODO this needs work for input like
+  -- +   list
+  --     item
+  -- The problem is that the second line is interpreted as a block start.
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
                $ blocksParser $ Just first'
