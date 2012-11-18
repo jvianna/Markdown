@@ -596,6 +596,12 @@ pHtmlTag = try $ do
   return (tagtype,
           T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
 
+pHtmlComment :: Parser Text
+pHtmlComment = try $ do
+  string "<!--"
+  rest <- manyTill anyChar (try $ string "-->")
+  return $ "<!--" <> T.pack rest <> "-->"
+
 pQuoted :: Char -> Parser Text
 pQuoted c = try $ do
   char c
@@ -641,12 +647,6 @@ blockHtmlTags = Set.fromList
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
   undefined
-
-pHtmlComment :: Parser Text
-pHtmlComment = try $ do
-  string "<!--"
-  rest <- manyTill anyChar (try $ string "-->")
-  return $ "<!--" <> T.pack rest <> "-->"
 
 {-
 pInBalancedTags :: P Text
@@ -871,7 +871,7 @@ pHexEntity = try $ do
   return $ "#" <> T.singleton x <> res
 
 pRawHtml :: Parser Inlines
-pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
+pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 
 pInPointyBrackets :: Parser Inlines
 pInPointyBrackets = try $ do
