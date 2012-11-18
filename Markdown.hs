@@ -659,7 +659,8 @@ htmlBlockParser ln _ = go (parse pHtmlBlock ln)
                     Done unparsed r   -> return $ r <>
                                          if T.null unparsed
                                             then empty
-                                            else processLines (T.lines unparsed)
+                                            else processLines
+                                                 (T.lines $ T.strip unparsed)
 
 pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
 pInBalancedTags mbtag = try $ do
