@@ -959,7 +959,7 @@ renderInlines = foldMap renderInline
   where renderInline :: Inline -> Html
         renderInline (Str t) = toHtml t
         renderInline Space   = " "
-        renderInline SoftBreak = " " -- or \n optionally
+        renderInline SoftBreak = "\n" -- or space optionally
         renderInline LineBreak = H.br <> "\n"
         renderInline (Emph ils) = H.em $ renderInlines ils
         renderInline (Strong ils) = H.strong $ renderInlines ils
