@@ -49,6 +49,7 @@ import Data.Foldable (foldMap, toList)
 import Control.Applicative hiding (optional,empty)
 import Data.Sequence (Seq, singleton, empty, (<|))
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 
 import qualified Data.Text as T
 import Data.Text ( Text )
@@ -661,6 +662,15 @@ pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
         pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
         pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
 
+blockHtmlTags :: Set.Set String
+blockHtmlTags = Set.fromList
+ [ "article", "header", "aside", "hgroup", "blockquote", "hr",
+   "body", "li", "br", "map", "button", "object", "canvas", "ol",
+   "caption", "output", "col", "p", "colgroup", "pre", "dd",
+   "progress", "div", "section", "dl", "table", "dt", "tbody",
+   "embed", "textarea", "fieldset", "tfoot", "figcaption", "th",
+   "figure", "thead", "footer", "footer", "tr", "form", "ul",
+   "h1", "h2", "h3", "h4", "h5", "h6", "video"]
 
 {-
 -- Block-level parsers.
