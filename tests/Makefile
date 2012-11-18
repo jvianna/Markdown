@@ -2,6 +2,7 @@ TESTDIR ?= *
 TESTS=$(wildcard $(TESTDIR)/*.markdown)
 DIFFS=$(patsubst %.markdown,%.diff,$(TESTS))
 PROG ?= ../bin/markdown
+TIDYCMD ?= tidy -asxhtml -utf8 --show-body-only yes --show-warnings no -quiet
 
 all: $(DIFFS)
 	PASS=0;TESTS=0; \
@@ -13,9 +14,20 @@ all: $(DIFFS)
 	if [ $$TESTS -eq $$PASS ]; then exit 0; else exit 1; fi
 
 %.actual.html: %.markdown $(PROG)
+ifeq ($(TIDY),1)
+	-$(PROG) $< | $(TIDYCMD) > $@
+else
 	$(PROG) $< > $@
+endif
 
-%.diff: %.html %.actual.html
+%.expected.html: %.html
+ifeq ($(TIDY),1)
+	-$(TIDYCMD) $< > $@
+else
+	cp $< $@
+endif
+
+%.diff: %.expected.html %.actual.html
 	diff -u $+ > $@ ; \
 	  if [ -s $@ ]; then \
 	  	echo "\x1b[1;31m✘ $(patsubst %.diff,%,$@)\x1b[0m"; \
