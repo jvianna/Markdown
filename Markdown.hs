@@ -327,7 +327,7 @@ tabFilter tabstop = T.concat . pad . T.split (== '\t')
 
 parseBlocks :: Text -> (Blocks, ReferenceMap)
 parseBlocks t = (bs, references s)
-  where (bs, s) = runState blocksParser
+  where (bs, s) = runState (blocksParser Nothing)
                     BlockParserState{ inputLines = map (tabFilter 4) $ T.lines t
                                     , references = M.empty
                                     , lineScanners = []
@@ -339,33 +339,36 @@ isEmptyLine = T.all isSpChar
   where isSpChar ' '  = True
         isSpChar _    = False
 
-blocksParser :: BlockParser Blocks
-blocksParser =
-  nextLine Peek BlockScan >>= maybe (return empty) doLine
+blocksParser :: Maybe Text -> BlockParser Blocks
+blocksParser mbln =
+  case mbln of
+       Nothing -> nextLine Consume BlockScan >>= maybe (return empty) doLine
+       Just ln -> doLine ln
  where doLine ln
-         | isEmptyLine ln = nextLine Consume BlockScan >> blocksParser
+         | isEmptyLine ln = blocksParser Nothing
          | otherwise = do
           next <- tryScanners
-                    [ (scanBlockquoteStart, blockquoteParser)
-                    , ((scanIndentSpace >> nfb scanBlankline),
-                        indentedCodeBlockParser)
-                    , (scanAtxHeaderStart, atxHeaderParser)
-                    , (scanCodeFenceLine, codeFenceParser)
-                    , (scanReference, referenceParser)
+                    [ (scanBlockquoteStart, blockquoteParser ln)
+                    -- , ((scanIndentSpace >> nfb scanBlankline),
+                    --    indentedCodeBlockParser)
+                    -- , (scanAtxHeaderStart, atxHeaderParser ln)
+                    -- , (scanCodeFenceLine, codeFenceParser)
+                    -- , (scanReference, referenceParser)
                     -- , (scanNonindentSpaces >> scanListStart, listParser)
+                    , (return (), parseLines ln)
                     ] ln
-          rest <- blocksParser
+          rest <- blocksParser Nothing
           return (next <> rest)
-       tryScanners [] _            = parseLines
+       tryScanners [] _            = error "Empty scanner list"
        tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
                                           Just _  -> p
                                           Nothing -> tryScanners rest ln
 
-blockquoteParser :: BlockParser Blocks
-blockquoteParser = singleton . Blockquote <$>
+blockquoteParser :: Text -> BlockParser Blocks
+blockquoteParser firstLine = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
     $ withBlockScanner scanBlockquoteStart
-        $ blocksParser)
+        $ blocksParser $ Just firstLine >>= applyScanners [scanBlockquoteStart])
 
 indentedCodeBlockParser :: BlockParser Blocks
 indentedCodeBlockParser =
@@ -375,15 +378,14 @@ indentedCodeBlockParser =
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
 
-atxHeaderParser :: BlockParser Blocks
-atxHeaderParser = do
-  next <- maybe "" T.strip <$> nextLine Consume BlockScan
-  let next'  = T.strip $ T.dropAround (=='#') next
-  let inside = if "\\" `T.isSuffixOf` next' && "#" `T.isSuffixOf` next
-                       then next' <> "#"  -- escaped final #
-                       else next'
-  case A.parseOnly atxHeaderParserStart next of
-        Left _  -> return $ singleton $ Para $ singleton $ Str next
+atxHeaderParser :: Text -> BlockParser Blocks
+atxHeaderParser ln = do
+  let ln' = T.strip $ T.dropAround (=='#') ln
+  let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
+                       then ln' <> "#"  -- escaped final #
+                       else ln'
+  case A.parseOnly atxHeaderParserStart ln of
+        Left _  -> return $ singleton $ Para $ singleton $ Str ln
         Right lev -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
 
@@ -475,7 +477,7 @@ listItemsParser starter scanContentsIndent = undefined
   let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
   let listItemBlocks = withBlockScanner scanContentsIndent
        $ withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
-                            scanListStart Nothing) $ blocksParser
+                            scanListStart Nothing) $ blocksParser Nothing
   -- TODO some abstraction for tight checking
   -- let isTight = ...
   let listItem =
@@ -500,11 +502,9 @@ listItemsParser starter scanContentsIndent = undefined
   return $ singleton $ List isTight' listType (first:rest)
 -}
 
-parseLines :: BlockParser Blocks
-parseLines = do
-  next <- nextLine Consume BlockScan
-  processLines <$> maybe (return []) (\x ->
-                          (x:) <$> (withLineScanner paraLine getLines)) next
+parseLines :: Text -> BlockParser Blocks
+parseLines next = do
+  processLines <$> (next:) <$> withLineScanner paraLine getLines
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        paraLine =   nfb scanBlankline
