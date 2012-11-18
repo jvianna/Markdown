@@ -119,12 +119,17 @@ listMarkerWidth (Numbered wrap n) =
 
 type ReferenceMap = M.Map Text (Text, Text)
 
+-- link references are case sensitive and ignore line breaks
+normalizeReference :: Text -> Text
+normalizeReference = T.toUpper . T.concat . T.split isWhitespace
+  where isWhitespace c = c == ' ' || c == '\t' || c == '\r' || c == '\n'
+
 addLinkReference :: Text -> (Text, Text) -> BlockParser ()
 addLinkReference key (url,tit) = modify $ \st ->
-  st{ references = M.insert (T.toUpper key) (url,tit) (references st) }
+  st{ references = M.insert (normalizeReference key) (url,tit) (references st) }
 
 lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
-lookupLinkReference refmap key = M.lookup (T.toUpper key) refmap
+lookupLinkReference refmap key = M.lookup (normalizeReference key) refmap
 
 type Scanner = Parser ()
 
