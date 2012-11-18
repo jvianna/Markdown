@@ -270,6 +270,7 @@ scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
 
 data BlockParserState = BlockParserState{
           inputLines    :: [Text]
+        , lastLine      :: Maybe Text
         , references    :: ReferenceMap
         , lineScanners  :: [Scanner]
         , blockScanners :: [Scanner]
@@ -298,12 +299,11 @@ withBlockScanner scanner parser = do
   return result
 
 data ScanType     = BlockScan | LineScan deriving Eq
-data OnSuccess    = Peek | Consume deriving Eq
 
 -- Apply scanners to next line, and return result if they match.
 -- Skip over empty lines if blockStart.
-nextLine :: OnSuccess -> ScanType -> BlockParser (Maybe Text)
-nextLine onSuccess scanType = do
+nextLine :: ScanType -> BlockParser (Maybe Text)
+nextLine scanType = do
   lns <- gets inputLines
   scanners <- gets $ case scanType of
                            BlockScan -> blockScanners
@@ -312,8 +312,8 @@ nextLine onSuccess scanType = do
        []     -> return Nothing
        (x:xs) -> case applyScanners scanners x of
                       Just x' -> do
-                         when (onSuccess == Consume) $
-                           modify $ \st -> st{ inputLines = xs }
+                         modify $ \st -> st{ inputLines = xs
+                                           , lastLine = Just x }
                          return $ Just x'
                       Nothing -> return Nothing
 
@@ -329,6 +329,7 @@ parseBlocks :: Text -> (Blocks, ReferenceMap)
 parseBlocks t = (bs, references s)
   where (bs, s) = runState (blocksParser Nothing)
                     BlockParserState{ inputLines = map (tabFilter 4) $ T.lines t
+                                    , lastLine = Nothing
                                     , references = M.empty
                                     , lineScanners = []
                                     , blockScanners = []
@@ -342,7 +343,7 @@ isEmptyLine = T.all isSpChar
 blocksParser :: Maybe Text -> BlockParser Blocks
 blocksParser mbln =
   case mbln of
-       Nothing -> nextLine Consume BlockScan >>= maybe (return empty) doLine
+       Nothing -> nextLine BlockScan >>= maybe (return empty) doLine
        Just ln -> doLine ln
  where doLine ln
          | isEmptyLine ln = blocksParser Nothing
@@ -374,7 +375,7 @@ indentedCodeBlockParser _ ln = do
   lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
- where getLines = nextLine Consume LineScan >>=
+ where getLines = nextLine LineScan >>=
                     maybe (return []) (\l -> (l:) <$> getLines)
 
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
@@ -399,7 +400,7 @@ codeFenceParser ln _ = do
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLines fence
    where getLines fence = do
-           mbln <- nextLine Consume LineScan
+           mbln <- nextLine LineScan
            case mbln of
                 Nothing -> return []
                 Just l
@@ -415,7 +416,7 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
 referenceParser :: Text -> Text -> BlockParser Blocks
 referenceParser first _ = do
   let getLines = do
-             mbln <- nextLine Consume LineScan
+             mbln <- nextLine LineScan
              case mbln of
                   Nothing  -> return []
                   Just ln  -> (ln:) <$> getLines
@@ -465,7 +466,7 @@ listParser first first' = do
 
 listItemsParser :: Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
 listItemsParser starter blockScanner lineScanner = do
-  mbfirst <- withBlockScanner starter $ nextLine Consume BlockScan
+  mbfirst <- withBlockScanner starter $ nextLine BlockScan
   case mbfirst of
        Nothing    -> return []
        Just first -> do
@@ -476,7 +477,7 @@ listItemsParser starter blockScanner lineScanner = do
          return (item:rest)
 
 {-
-  first <- maybe "" id <$> nextLine Consume BlockScan
+  first <- maybe "" id <$> nextLine BlockScan
   let listStart = do
         initialSpaces <- takeWhile (==' ')
         listType <- parseListMarker
@@ -519,7 +520,7 @@ listItemsParser starter blockScanner lineScanner = do
 parseLines :: Text -> Text -> BlockParser Blocks
 parseLines _ firstLine = do
   processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
- where getLines = nextLine Consume LineScan >>=
+ where getLines = nextLine LineScan >>=
                     maybe (return []) (\x -> (x:) <$> getLines)
        paraLine =   nfb scanBlankline
                  >> nfb scanIndentSpace
