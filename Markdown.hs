@@ -181,14 +181,14 @@ nfb s = do
      then mzero
      else return ()
 
-atxHeaderParserStart :: A.Parser Int
-atxHeaderParserStart = do
+parseAtxHeaderStart :: A.Parser Int
+parseAtxHeaderStart = do
   hashes <- A.takeWhile1 (=='#')
   scanSpace
   return $ T.length hashes
 
 scanAtxHeaderStart :: Scanner
-scanAtxHeaderStart = () <$ atxHeaderParserStart
+scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
 scanHRuleLine :: Scanner
 scanHRuleLine = A.try $ do
@@ -351,7 +351,7 @@ blocksParser mbln =
                     [ (scanBlockquoteStart, blockquoteParser ln)
                     -- , ((scanIndentSpace >> nfb scanBlankline),
                     --    indentedCodeBlockParser)
-                    -- , (scanAtxHeaderStart, atxHeaderParser ln)
+                    , (scanAtxHeaderStart, atxHeaderParser ln)
                     -- , (scanCodeFenceLine, codeFenceParser)
                     -- , (scanReference, referenceParser)
                     -- , (scanNonindentSpaces >> scanListStart, listParser)
@@ -380,11 +380,14 @@ indentedCodeBlockParser =
 
 atxHeaderParser :: Text -> BlockParser Blocks
 atxHeaderParser ln = do
+  let lev = case A.parseOnly parseAtxHeaderStart ln of
+                 Left e  -> error (show e)
+                 Right n -> n
   let ln' = T.strip $ T.dropAround (=='#') ln
   let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
                        then ln' <> "#"  -- escaped final #
                        else ln'
-  case A.parseOnly atxHeaderParserStart ln of
+  case A.parseOnly parseAtxHeaderStart ln of
         Left _  -> return $ singleton $ Para $ singleton $ Str ln
         Right lev -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
