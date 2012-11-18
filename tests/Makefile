@@ -19,7 +19,7 @@ all: $(DIFFS)
 	diff -u $+ > $@ ; \
 	  if [ -s $@ ]; then \
 	  	echo "\x1b[1;31m✘ $(patsubst %.diff,%,$@)\x1b[0m"; \
-		echo; cat $@; echo; \
+		echo "\x1b[0;36m" ; cat $@; echo "\x1b[0m"; \
 	  else \
 	  	echo "\x1b[1;32m✓ $(patsubst %.diff,%,$@)\x1b[0m"; \
 	  fi
