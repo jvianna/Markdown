@@ -541,37 +541,37 @@ parseLines _ firstLine = do
                  >> nfb scanAtxHeaderStart
                  >> nfb scanCodeFenceLine
                  >> nfb (scanSpaces >> scanListStart Nothing)
-       markdown = singleton . Markdown . T.strip
-       processLines [] = empty
-       processLines ws =
-         case break isSpecialLine ws of
-               (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
-               (xs,(y:ys))
-                 | isSetextLine y ->
-                     case reverse xs of
-                           []     -> Header (setextLevel y) empty
-                                     <| processLines ys
-                           [z]    -> Header (setextLevel y) (markdown z)
-                                     <| processLines ys
-                           (z:zs) -> Para (markdown $ joinLines $ reverse zs)
-                                  <| Header (setextLevel y) (markdown z)
-                                  <| processLines ys
-                 | isHruleLine y  ->
-                     case xs of
-                           []     -> HRule
-                                     <| processLines ys
-                           _      -> Para (markdown $ joinLines xs)
-                                     <| HRule
-                                     <| processLines ys
-                 | otherwise      -> error "Should not happen"
-       isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
-       isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
-       isSetextLine  x = isSetext1Line x || isSetext2Line x
-       setextLevel   x = if isSetext1Line x then 1 else 2
-       isHruleLine = maybe False (const True) . applyScanners [scanHRuleLine]
-       isSpecialLine x = isSetextLine x || isHruleLine x
 
-
+processLines :: [Text] -> Blocks
+processLines [] = empty
+processLines ws =
+  case break isSpecialLine ws of
+        (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
+        (xs,(y:ys))
+          | isSetextLine y ->
+              case reverse xs of
+                    []     -> Header (setextLevel y) empty
+                              <| processLines ys
+                    [z]    -> Header (setextLevel y) (markdown z)
+                              <| processLines ys
+                    (z:zs) -> Para (markdown $ joinLines $ reverse zs)
+                           <| Header (setextLevel y) (markdown z)
+                           <| processLines ys
+          | isHruleLine y  ->
+              case xs of
+                    []     -> HRule
+                              <| processLines ys
+                    _      -> Para (markdown $ joinLines xs)
+                              <| HRule
+                              <| processLines ys
+          | otherwise      -> error "Should not happen"
+  where isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
+        isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
+        isSetextLine  x = isSetext1Line x || isSetext2Line x
+        setextLevel   x = if isSetext1Line x then 1 else 2
+        isHruleLine = maybe False (const True) . applyScanners [scanHRuleLine]
+        isSpecialLine x = isSetextLine x || isHruleLine x
+        markdown = singleton . Markdown . T.strip
 
 -- Utility parsers.
 
