@@ -371,6 +371,7 @@ blocksParser mbln =
                     , (scanCodeFenceLine, codeFenceParser)
                     , (scanReference, referenceParser)
                     , (scanNonindentSpaces >> scanListStart Nothing, listParser)
+                    , (scanHtmlBlockStart, htmlBlockParser)
                     , (return (), parseLines)
                     ] ln
           rest <- blocksParser Nothing
@@ -495,47 +496,6 @@ listItemsParser isTight starter blockScanner lineScanner = do
                       _                                 ->
                        listItemsParser isTight starter blockScanner lineScanner
          return (item:rest)
-
-{-
-  first <- maybe "" id <$> nextLine BlockScan
-  let listStart = do
-        initialSpaces <- takeWhile (==' ')
-        listType <- parseListMarker
-        rest <- takeText
-        return (initialSpaces, listType, rest)
-  (initialSpaces, listType, rest) <-
-        case parseOnly listStart first of
-             Left _   -> fail "Could not parse list marker"
-             Right r  -> return r
-  let scanContentsIndent = () <$ count
-         (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
-  let starter = try $ string initialSpaces *> scanListStart (Just listType)
-  let listItemBlocks = withBlockScanner scanContentsIndent
-       $ withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
-                            scanListStart Nothing) $ blocksParser Nothing
-  -- TODO some abstraction for tight checking
-  -- let isTight = ...
-  let listItem =
-        -- blocksep?
-        -- check for tight?
-        starter >> listItemBlocks
-  rest <- many listItem
-  let isTight' = False -- if null rest then True else isTight
-  return $ singleton $ List isTight' listType (first:rest)
--}
-{-
-  isTight <- (== 0) <$> (lookAhead pBlockSep <|> return 0)
-  let listItem = try $ do
-        num <- pBlockSep
-        when (isTight && num > 0) $
-           fail "Change in tightness ends list"
-        starter
-        blocks <- listItemBlocks
-        return blocks
-  rest <- many listItem
-  let isTight' = if null rest then True else isTight
-  return $ singleton $ List isTight' listType (first:rest)
--}
 
 parseLines :: Text -> Text -> BlockParser Blocks
 parseLines _ firstLine = do
@@ -677,6 +637,9 @@ blockHtmlTags = Set.fromList
    "embed", "textarea", "fieldset", "tfoot", "figcaption", "th",
    "figure", "thead", "footer", "footer", "tr", "form", "ul",
    "h1", "h2", "h3", "h4", "h5", "h6", "video"]
+
+htmlBlockParser :: Text -> Text -> BlockParser Blocks
+htmlBlockParser = undefined
 
 {-
 -- Block-level parsers.
