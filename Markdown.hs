@@ -39,6 +39,7 @@ QUESTIONS
 -}
 
 module Markdown {-(parseMarkdown, renderBlocks)-} where
+import Prelude hiding (takeWhile)
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
@@ -53,7 +54,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import Data.Text ( Text )
 
-import qualified Data.Attoparsec.Text as A
+import Data.Attoparsec.Text
 
 -- for HTML rendering
 import qualified Text.Blaze.XHtml5 as H
@@ -126,13 +127,13 @@ addLinkReference key (url,tit) = modify $ \st ->
 lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
 lookupLinkReference refmap key = M.lookup (T.toUpper key) refmap
 
-type Scanner = A.Parser ()
+type Scanner = Parser ()
 
 -- Try to match the scanner, returning Just the remaining text if
 -- it matches, Nothing otherwise.
 applyScanners :: [Scanner] -> Text -> Maybe Text
 applyScanners scanners t =
-  case A.parseOnly (sequence_ scanners >> A.takeText) t of
+  case parseOnly (sequence_ scanners >> takeText) t of
        Right t'   -> Just t'
        Left _err  -> Nothing
 
@@ -154,36 +155,36 @@ scanNonindentSpaces =
   ) <|> return ()
 
 scanChar :: Char -> Scanner
-scanChar c = A.char c >> return ()
+scanChar c = char c >> return ()
 
 scanBlankline :: Scanner
-scanBlankline = A.skipWhile (==' ') *> A.endOfInput
+scanBlankline = skipWhile (==' ') *> endOfInput
 
 scanSpace :: Scanner
-scanSpace = () <$ A.satisfy (==' ')
+scanSpace = () <$ satisfy (==' ')
 
 -- 0 or more spaces
 scanSpaces :: Scanner
-scanSpaces = A.skipWhile (==' ')
+scanSpaces = skipWhile (==' ')
 
 scanSpnl :: Scanner
-scanSpnl = scanSpaces *> opt (A.endOfLine *> scanSpaces)
+scanSpnl = scanSpaces *> opt (endOfLine *> scanSpaces)
 
 -- optional
 opt :: Scanner -> Scanner
-opt s = A.option () (s >> return ())
+opt s = option () (s >> return ())
 
 -- not followed by
-nfb :: A.Parser a -> Scanner
+nfb :: Parser a -> Scanner
 nfb s = do
-  succeeded <- A.option False (True <$ s)
+  succeeded <- option False (True <$ s)
   if succeeded
      then mzero
      else return ()
 
-parseAtxHeaderStart :: A.Parser Int
+parseAtxHeaderStart :: Parser Int
 parseAtxHeaderStart = do
-  hashes <- A.takeWhile1 (=='#')
+  hashes <- takeWhile1 (=='#')
   scanSpace
   return $ T.length hashes
 
@@ -191,12 +192,12 @@ scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
 scanHRuleLine :: Scanner
-scanHRuleLine = A.try $ do
+scanHRuleLine = try $ do
   scanNonindentSpaces
-  c <- A.satisfy (\c -> c == '*' || c == '-' || c == '_')
-  A.count 2 $ A.try $ scanSpaces >> A.char c
-  A.skipWhile (\x -> x == ' ' || x == c)
-  A.endOfInput
+  c <- satisfy (\c -> c == '*' || c == '-' || c == '_')
+  count 2 $ try $ scanSpaces >> char c
+  skipWhile (\x -> x == ' ' || x == c)
+  endOfInput
   return ()
 
 isCodeFenceChar :: Char -> Bool
@@ -207,14 +208,14 @@ isCodeFenceChar _   = False
 scanCodeFenceLine :: Scanner
 scanCodeFenceLine = () <$ codeFenceParserLine
 
-codeFenceParserLine :: A.Parser (Text, Text)
-codeFenceParserLine = A.try $ do
-  c <- A.satisfy isCodeFenceChar
-  A.count 2 (A.char c)
-  extra <- A.takeWhile (== c)
+codeFenceParserLine :: Parser (Text, Text)
+codeFenceParserLine = try $ do
+  c <- satisfy isCodeFenceChar
+  count 2 (char c)
+  extra <- takeWhile (== c)
   scanSpaces
-  rawattr <- A.takeWhile (/='`')
-  A.endOfInput
+  rawattr <- takeWhile (/='`')
+  endOfInput
   return (T.pack [c,c,c] <> extra, rawattr)
 
 isBulletChar :: Char -> Bool
@@ -223,47 +224,47 @@ isBulletChar '+' = True
 isBulletChar '*' = True
 isBulletChar _   = False
 
-scanListStart :: Maybe ListType -> A.Parser ()
+scanListStart :: Maybe ListType -> Parser ()
 scanListStart Nothing = () <$ parseListMarker
-scanListStart (Just (Bullet   c)) = A.try $ do
+scanListStart (Just (Bullet   c)) = try $ do
   marker <- parseBullet
   case marker of
         Bullet c' | c == c' -> return ()
         _                   -> fail "Change in list style"
-scanListStart (Just (Numbered w _)) = A.try $ do
+scanListStart (Just (Numbered w _)) = try $ do
   marker <- parseListNumber
   case marker of
         Numbered w' _ | w == w' -> return ()
         _                       -> fail "Change in list style"
 
-parseListMarker :: A.Parser ListType
+parseListMarker :: Parser ListType
 parseListMarker = parseBullet <|> parseListNumber
 
-parseBullet :: A.Parser ListType
+parseBullet :: Parser ListType
 parseBullet = do
-  c <- A.satisfy isBulletChar
+  c <- satisfy isBulletChar
   scanSpace
-  nfb $ A.count 2 $ A.try $ scanSpaces >> A.char c -- hrule
+  nfb $ count 2 $ try $ scanSpaces >> char c -- hrule
   return $ Bullet c
 
-parseListNumber :: A.Parser ListType
+parseListNumber :: Parser ListType
 parseListNumber =
   (parseListNumberDig <|> parseListNumberPar) <* scanSpace <* scanSpaces
-  where parseListNumberDig = A.try $ do
-           num <- A.decimal
-           wrap <-  PeriodFollowing <$ A.char '.'
-                <|> ParenFollowing <$ A.char ')'
+  where parseListNumberDig = try $ do
+           num <- decimal
+           wrap <-  PeriodFollowing <$ char '.'
+                <|> ParenFollowing <$ char ')'
            return $ Numbered wrap num
-        parseListNumberPar = A.try $ do
-           A.char '('
-           num <- A.decimal
-           A.char ')'
+        parseListNumberPar = try $ do
+           char '('
+           num <- decimal
+           char ')'
            return $ Numbered ParensAround num
 
 -- note: this requires reference labels to be on one line.
 scanReference :: Scanner
 scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
-  (scanSpace <|> A.endOfLine)
+  (scanSpace <|> endOfLine)
 
 ---
 
@@ -379,21 +380,21 @@ indentedCodeBlockParser _ ln = do
 
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
 atxHeaderParser ln _ = do
-  let lev = case A.parseOnly parseAtxHeaderStart ln of
+  let lev = case parseOnly parseAtxHeaderStart ln of
                  Left e  -> error (show e)
                  Right n -> n
   let ln' = T.strip $ T.dropAround (=='#') ln
   let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
                        then ln' <> "#"  -- escaped final #
                        else ln'
-  case A.parseOnly parseAtxHeaderStart ln of
+  case parseOnly parseAtxHeaderStart ln of
         Left _  -> return $ singleton $ Para $ singleton $ Str ln
         Right lev -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
 
 codeFenceParser :: Text -> Text -> BlockParser Blocks
 codeFenceParser ln _ = do
-  case A.parseOnly codeFenceParserLine ln of
+  case parseOnly codeFenceParserLine ln of
        Left _  -> return $ singleton $ Para $ singleton $ Str ln
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
@@ -421,39 +422,39 @@ referenceParser first _ = do
                   Just ln  -> (ln:) <$> getLines
   rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
   let raw = joinLines (first:rest)
-  case A.parseOnly pReference raw of
+  case parseOnly pReference raw of
        Left  _               -> return $ singleton $ Para
                                        $ singleton $ Markdown raw
        Right (lab, url, tit) -> empty <$ addLinkReference lab (url,tit)
 
-pReference :: A.Parser (Text, Text, Text)
+pReference :: Parser (Text, Text, Text)
 pReference = do
   scanNonindentSpaces
   lab <- pLinkLabel
-  A.char ':'
+  char ':'
   scanSpnl
   url <- pLinkUrl
   scanSpnl
-  tit <- A.option T.empty $ A.try $ scanSpnl >> pLinkTitle
+  tit <- option T.empty $ try $ scanSpnl >> pLinkTitle
   scanSpaces
-  A.endOfInput
+  endOfInput
   return (lab, url, tit)
 
 listParser :: BlockParser Blocks
 listParser = do
   first <- maybe "" id <$> nextLine Consume BlockScan
   let listStart = do
-        initialSpaces <- A.takeWhile (==' ')
+        initialSpaces <- takeWhile (==' ')
         listType <- parseListMarker
-        rest <- A.takeText
+        rest <- takeText
         return (initialSpaces, listType, rest)
   (initialSpaces, listType, rest) <-
-        case A.parseOnly listStart first of
+        case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
-  let scanContentsIndent = () <$ A.count
-         (T.length initialSpaces + listMarkerWidth listType) (A.skip (==' '))
-  let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
+  let scanContentsIndent = () <$ count
+         (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
+  let starter = try $ string initialSpaces *> scanListStart (Just listType)
   items <- listItemsParser starter scanContentsIndent
   let isTight = False -- TODO
   return $ singleton $ List isTight listType items
@@ -464,17 +465,17 @@ listItemsParser starter scanContentsIndent = undefined
 {-
   first <- maybe "" id <$> nextLine Consume BlockScan
   let listStart = do
-        initialSpaces <- A.takeWhile (==' ')
+        initialSpaces <- takeWhile (==' ')
         listType <- parseListMarker
-        rest <- A.takeText
+        rest <- takeText
         return (initialSpaces, listType, rest)
   (initialSpaces, listType, rest) <-
-        case A.parseOnly listStart first of
+        case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
-  let scanContentsIndent = () <$ A.count
-         (T.length initialSpaces + listMarkerWidth listType) (A.skip (==' '))
-  let starter = A.try $ A.string initialSpaces *> scanListStart (Just listType)
+  let scanContentsIndent = () <$ count
+         (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
+  let starter = try $ string initialSpaces *> scanListStart (Just listType)
   let listItemBlocks = withBlockScanner scanContentsIndent
        $ withLineScanner (nfb $ scanContentsIndent >> scanSpaces >>
                             scanListStart Nothing) $ blocksParser Nothing
@@ -550,23 +551,23 @@ parseLines _ firstLine = do
 joinLines :: [Text] -> Text
 joinLines = T.intercalate "\n"
 
-pEscapedChar :: A.Parser Char
-pEscapedChar = A.try $ A.char '\\' *> A.satisfy isEscapable
+pEscapedChar :: Parser Char
+pEscapedChar = try $ char '\\' *> satisfy isEscapable
 
 isEscapable :: Char -> Bool
 isEscapable c = isSymbol c || isPunctuation c
 
 -- parses a character satisfying the predicate, but understands escaped
 -- symbols
-pSatisfy :: (Char -> Bool) -> A.Parser Char
+pSatisfy :: (Char -> Bool) -> Parser Char
 pSatisfy p =
-  A.satisfy (\c -> c /= '\\' && p c)
-   <|> A.try (A.char '\\' *> A.satisfy (\c -> isEscapable c && p c))
+  satisfy (\c -> c /= '\\' && p c)
+   <|> try (char '\\' *> satisfy (\c -> isEscapable c && p c))
 
-pAnyChar :: A.Parser Char
+pAnyChar :: Parser Char
 pAnyChar = pSatisfy (const True)
 
-pNonspaceChar :: A.Parser Char
+pNonspaceChar :: Parser Char
 pNonspaceChar = pSatisfy isNonspaceChar
   where isNonspaceChar ' '  = False
         isNonspaceChar '\n' = False
@@ -576,23 +577,23 @@ pNonspaceChar = pSatisfy isNonspaceChar
 data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
 -- returns name of tag needed to close, and whole tag
-pHtmlTag :: A.Parser (HtmlTagType, Text)
-pHtmlTag = A.try $ do
-  A.char '<'
+pHtmlTag :: Parser (HtmlTagType, Text)
+pHtmlTag = try $ do
+  char '<'
   -- do not end the tag with a > character in a quoted attribute.
-  closing <- (A.char '/' >> return True) <|> return False
+  closing <- (char '/' >> return True) <|> return False
   tagname <- T.toLower <$>
-                A.takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
-  let attr = do ss <- A.takeWhile isSpace
-                x <- A.letter
-                xs <- A.takeWhile (\c -> isAlphaNum c || c == ':')
-                A.skip (=='=')
-                v <- pQuoted '"' <|> pQuoted '\'' <|> A.takeWhile1 isAlphaNum
+                takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
+  let attr = do ss <- takeWhile isSpace
+                x <- letter
+                xs <- takeWhile (\c -> isAlphaNum c || c == ':')
+                skip (=='=')
+                v <- pQuoted '"' <|> pQuoted '\'' <|> takeWhile1 isAlphaNum
                       <|> return ""
                 return $ ss <> T.singleton x <> xs <> "=" <> v
-  attrs <- T.concat <$> many (A.try attr)
-  final <- A.takeWhile (\c -> isSpace c || c == '/')
-  A.char '>'
+  attrs <- T.concat <$> many (try attr)
+  final <- takeWhile (\c -> isSpace c || c == '/')
+  char '>'
   let tagtype = if closing
                    then Closing tagname
                    else case T.stripSuffix "/" final of
@@ -601,37 +602,37 @@ pHtmlTag = A.try $ do
   return (tagtype,
           T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
 
-pQuoted :: Char -> A.Parser Text
-pQuoted c = A.try $ do
-  A.char c
-  contents <- A.takeTill (== c)
-  A.char c
+pQuoted :: Char -> Parser Text
+pQuoted c = try $ do
+  char c
+  contents <- takeTill (== c)
+  char c
   return (T.singleton c <> contents <> T.singleton c)
 
-pLinkLabel :: A.Parser Text
-pLinkLabel = A.try $ A.char '[' *> (T.concat <$>
-  (A.manyTill (regChunk <|> bracketed <|> codeChunk) (A.char ']')))
-  where regChunk = T.pack <$> A.many1 (pSatisfy (A.notInClass "`[]"))
+pLinkLabel :: Parser Text
+pLinkLabel = try $ char '[' *> (T.concat <$>
+  (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
+  where regChunk = T.pack <$> many1 (pSatisfy (notInClass "`[]"))
         codeChunk = snd <$> pCode'
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
 
-pLinkUrl :: A.Parser Text
-pLinkUrl = A.try $ do
-  inPointy <- (A.char '<' >> return True) <|> return False
+pLinkUrl :: Parser Text
+pLinkUrl = try $ do
+  inPointy <- (char '<' >> return True) <|> return False
   if inPointy
-     then A.takeWhile (A.notInClass "\r\n>") <* A.char '>'
+     then takeWhile (notInClass "\r\n>") <* char '>'
      else T.concat <$> many (regChunk <|> parenChunk)
-    where regChunk = A.takeWhile1 (A.notInClass " \r\n()")
-          parenChunk = inParens . T.concat <$> (A.char '(' *>
-                         A.manyTill (regChunk <|> parenChunk) (A.char ')'))
+    where regChunk = takeWhile1 (notInClass " \r\n()")
+          parenChunk = inParens . T.concat <$> (char '(' *>
+                         manyTill (regChunk <|> parenChunk) (char ')'))
           inParens x = "(" <> x <> ")"
 
-pLinkTitle :: A.Parser Text
+pLinkTitle :: Parser Text
 pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
-  where pLinkTitleDQ = A.try $ A.char '"' *> A.manyTill pAnyChar (A.char '"')
-        pLinkTitleSQ = A.try $ A.char '\'' *> A.manyTill pAnyChar (A.char '\'')
-        pLinkTitleP  = A.try $ A.char '(' *> A.manyTill pAnyChar (A.char ')')
+  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
+        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
+        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
 
 
 {-
@@ -674,11 +675,11 @@ pHtmlComment = try $ do
 
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
-  case A.parseOnly (msum <$> many (pInline refmap) <* A.endOfInput) t of
+  case parseOnly (msum <$> many (pInline refmap) <* endOfInput) t of
        Left e   -> singleton $ Err (T.strip t) (T.pack $ show e)
        Right r  -> r
 
-pInline :: ReferenceMap -> A.Parser Inlines
+pInline :: ReferenceMap -> Parser Inlines
 pInline refmap =
            pSpace
        <|> pStr
@@ -692,33 +693,33 @@ pInline refmap =
        <|> pInPointyBrackets
        <|> pSym
 
-pSpace :: A.Parser Inlines
+pSpace :: Parser Inlines
 pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
   where pSpaceSpace = scanSpace >>
             (pSpaceNewline <|> pSpaceLB <|> return Space)
         pSpaceLB = scanSpace >> scanSpaces >>
                       ((pSpaceNewline >> return LineBreak) <|> return Space)
-        pSpaceNewline = A.endOfLine >> scanSpaces >> return SoftBreak
+        pSpaceNewline = endOfLine >> scanSpaces >> return SoftBreak
 
-pStr :: A.Parser Inlines
+pStr :: Parser Inlines
 pStr = do
-  let strChunk = A.takeWhile1 isAlphaNum
-  let underscore = A.string "_"
-  s <- T.intercalate "_" <$> strChunk `A.sepBy1` underscore
+  let strChunk = takeWhile1 isAlphaNum
+  let underscore = string "_"
+  s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
   if s `elem` uriProtocols
-     then A.try (pUri s) <|> return (singleton $ Str s)
+     then try (pUri s) <|> return (singleton $ Str s)
      else return (singleton $ Str s)
 
-pSym :: A.Parser Inlines
+pSym :: Parser Inlines
 pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
 
 uriProtocols :: [Text]
 uriProtocols =
   [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
 
-pUri :: Text -> A.Parser Inlines
+pUri :: Text -> Parser Inlines
 pUri protocol = do
-  A.char ':'
+  char ':'
   -- Scan non-ascii characters and ascii characters allowed in a URI.
   -- We allow punctuation except when followed by a space, since
   -- we don't want the trailing '.' in 'http://google.com.'
@@ -729,14 +730,14 @@ pUri protocol = do
   -- as a URL, while NOT picking up the closing paren in
   -- (http://wikipedia.org)
   -- So we include balanced parens in the URL.
-  let inParens = A.try $ do A.char '('
-                            res <- A.takeWhile isUriChar
-                            A.char ')'
-                            return $ "(" <> res <> ")"
-  let innerPunct = T.singleton <$> A.try (A.char '/'
-        <|> (pSatisfy isPunctuation <* nfb A.space <* nfb A.endOfInput))
-  let uriChunk = A.takeWhile1 isUriChar <|> inParens <|> innerPunct
-  rest <- T.concat <$> A.many1 uriChunk
+  let inParens = try $ do char '('
+                          res <- takeWhile isUriChar
+                          char ')'
+                          return $ "(" <> res <> ")"
+  let innerPunct = T.singleton <$> try (char '/'
+        <|> (pSatisfy isPunctuation <* nfb space <* nfb endOfInput))
+  let uriChunk = takeWhile1 isUriChar <|> inParens <|> innerPunct
+  rest <- T.concat <$> many1 uriChunk
   -- now see if they amount to an absolute URI
   let rawuri = protocol <> ":" <> rest
   case parseURI (T.unpack $ escapeUri rawuri) of
@@ -752,9 +753,9 @@ isEnclosureChar '*' = True
 isEnclosureChar '_' = True
 isEnclosureChar _   = False
 
-pEnclosure :: Char -> ReferenceMap -> A.Parser Inlines
+pEnclosure :: Char -> ReferenceMap -> Parser Inlines
 pEnclosure c refmap = do
-  cs <- A.takeWhile1 (== c)
+  cs <- takeWhile1 (== c)
   (Str cs <|) <$> pSpace
    <|> case T.length cs of
             3  -> pThree c refmap
@@ -770,19 +771,19 @@ single constructor ils = if Seq.null ils
 
 -- parse inlines til you hit a c, and emit Emph.
 -- if you never hit a c, emit '*' + inlines parsed.
-pOne :: Char -> ReferenceMap -> Inlines -> A.Parser Inlines
+pOne :: Char -> ReferenceMap -> Inlines -> Parser Inlines
 pOne c refmap prefix = do
-  contents <- msum <$> many ( (nfb (A.char c) >> pInline refmap)
-                             <|> (A.try $ A.string (T.pack [c,c]) >>
-                                  nfb (A.char c) >> pTwo c refmap prefix) )
-  (A.char c >> return (single Emph $ prefix <> contents))
+  contents <- msum <$> many ( (nfb (char c) >> pInline refmap)
+                             <|> (try $ string (T.pack [c,c]) >>
+                                  nfb (char c) >> pTwo c refmap prefix) )
+  (char c >> return (single Emph $ prefix <> contents))
     <|> return (singleton (Str (T.singleton c)) <> (prefix <> contents))
 
 -- parse inlines til you hit two c's, and emit Strong.
 -- if you never do hit two c's, emit '**' plus + inlines parsed.
-pTwo :: Char -> ReferenceMap -> Inlines -> A.Parser Inlines
+pTwo :: Char -> ReferenceMap -> Inlines -> Parser Inlines
 pTwo c refmap prefix = do
-  let ender = A.string $ T.pack [c,c]
+  let ender = string $ T.pack [c,c]
   contents <- msum <$> many (nfb ender >> pInline refmap)
   (ender >> return (single Strong $ prefix <> contents))
     <|> return (singleton (Str $ T.pack [c,c]) <> (prefix <> contents))
@@ -790,87 +791,87 @@ pTwo c refmap prefix = do
 -- parse inlines til you hit one c or a sequence of two c's.
 -- If one c, emit Emph and then parse pTwo.
 -- if two c's, emit Strong and then parse pOne.
-pThree :: Char -> ReferenceMap -> A.Parser Inlines
+pThree :: Char -> ReferenceMap -> Parser Inlines
 pThree c refmap = do
-  contents <- msum <$> (many (nfb (A.char c) >> pInline refmap))
-  (A.string (T.pack [c,c]) >> (pOne c refmap (single Strong contents)))
-   <|> (A.char c >> (pTwo c refmap (single Emph contents)))
+  contents <- msum <$> (many (nfb (char c) >> pInline refmap))
+  (string (T.pack [c,c]) >> (pOne c refmap (single Strong contents)))
+   <|> (char c >> (pTwo c refmap (single Emph contents)))
    <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
-pCode :: A.Parser Inlines
+pCode :: Parser Inlines
 pCode = fst <$> pCode'
 
-pCode' :: A.Parser (Inlines, Text)
-pCode' = A.try $ do
-  ticks <- A.takeWhile1 (== '`')
-  let end = A.try $ A.string ticks >> nfb (A.char '`')
-  let nonBacktickSpan = A.takeWhile1 (/= '`')
-  let backtickSpan = A.takeWhile1 (== '`')
-  contents <- T.concat <$> A.manyTill (nonBacktickSpan <|> backtickSpan) end
+pCode' :: Parser (Inlines, Text)
+pCode' = try $ do
+  ticks <- takeWhile1 (== '`')
+  let end = try $ string ticks >> nfb (char '`')
+  let nonBacktickSpan = takeWhile1 (/= '`')
+  let backtickSpan = takeWhile1 (== '`')
+  contents <- T.concat <$> manyTill (nonBacktickSpan <|> backtickSpan) end
   return (singleton . Code . T.strip $ contents, ticks <> contents <> ticks)
 
-pLink :: ReferenceMap -> A.Parser Inlines
+pLink :: ReferenceMap -> Parser Inlines
 pLink refmap = do
   lab <- pLinkLabel
   let lab' = parseInlines refmap lab
   pInlineLink lab' <|> pReferenceLink refmap lab lab'
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
-pInlineLink :: Inlines -> A.Parser Inlines
-pInlineLink lab = A.try $ do
-  A.char '('
+pInlineLink :: Inlines -> Parser Inlines
+pInlineLink lab = try $ do
+  char '('
   scanSpaces
   url <- pLinkUrl
-  tit <- A.option "" $ A.try $ scanSpnl *> pLinkTitle <* scanSpaces
-  A.char ')'
+  tit <- option "" $ try $ scanSpnl *> pLinkTitle <* scanSpaces
+  char ')'
   return $ singleton $ Link lab url tit
 
-pReferenceLink :: ReferenceMap -> Text -> Inlines -> A.Parser Inlines
-pReferenceLink refmap rawlab lab = A.try $ do
-  ref <- A.option rawlab $ A.try $ scanSpaces >> pLinkLabel
+pReferenceLink :: ReferenceMap -> Text -> Inlines -> Parser Inlines
+pReferenceLink refmap rawlab lab = try $ do
+  ref <- option rawlab $ try $ scanSpaces >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
   case lookupLinkReference refmap ref' of
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
 
-pImage :: ReferenceMap -> A.Parser Inlines
-pImage refmap = A.try $ do
-  A.char '!'
+pImage :: ReferenceMap -> Parser Inlines
+pImage refmap = try $ do
+  char '!'
   let linkToImage (Link lab url tit) = Image lab url tit
       linkToImage x                  = x
   fmap linkToImage <$> pLink refmap
 
-pEntity :: A.Parser Inlines
-pEntity = A.try $ do
-  A.char '&'
+pEntity :: Parser Inlines
+pEntity = try $ do
+  char '&'
   res <- pCharEntity <|> pDecEntity <|> pHexEntity
-  A.char ';'
+  char ';'
   return $ singleton $ Entity $ "&" <> res <> ";"
 
-pCharEntity :: A.Parser Text
-pCharEntity = A.takeWhile1 (\c -> isAscii c && isLetter c)
+pCharEntity :: Parser Text
+pCharEntity = takeWhile1 (\c -> isAscii c && isLetter c)
 
-pDecEntity :: A.Parser Text
-pDecEntity = A.try $ do
-  A.char '#'
-  res <- A.takeWhile1 isDigit
+pDecEntity :: Parser Text
+pDecEntity = try $ do
+  char '#'
+  res <- takeWhile1 isDigit
   return $ "#" <> res
 
-pHexEntity :: A.Parser Text
-pHexEntity = A.try $ do
-  A.char '#'
-  x <- A.char 'X' <|> A.char 'x'
-  res <- A.takeWhile1 isHexDigit
+pHexEntity :: Parser Text
+pHexEntity = try $ do
+  char '#'
+  x <- char 'X' <|> char 'x'
+  res <- takeWhile1 isHexDigit
   return $ "#" <> T.singleton x <> res
 
-pRawHtml :: A.Parser Inlines
+pRawHtml :: Parser Inlines
 pRawHtml = singleton . RawHtml . snd <$> pHtmlTag
 
-pInPointyBrackets :: A.Parser Inlines
-pInPointyBrackets = A.try $ do
-  A.char '<'
-  t <- A.takeWhile1 (/='>')
-  A.char '>'
+pInPointyBrackets :: Parser Inlines
+pInPointyBrackets = try $ do
+  char '<'
+  t <- takeWhile1 (/='>')
+  char '>'
   case t of
        _ | startsWithProtocol t -> return $ autoLink t
          | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
@@ -878,13 +879,13 @@ pInPointyBrackets = A.try $ do
 
 scanMatches :: Scanner -> Text -> Bool
 scanMatches scanner t =
-  case A.parseOnly scanner t of
+  case parseOnly scanner t of
        Right ()   -> True
        _          -> False
 
 startsWithProtocol :: Text -> Bool
 startsWithProtocol =
-  scanMatches $ A.choice (map A.string uriProtocols) >> A.skip (== ':')
+  scanMatches $ choice (map string uriProtocols) >> skip (== ':')
 
 autoLink :: Text -> Inlines
 autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
