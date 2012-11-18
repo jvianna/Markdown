@@ -381,9 +381,6 @@ indentedCodeBlockParser _ ln = do
 
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
 atxHeaderParser ln _ = do
-  let lev = case parseOnly parseAtxHeaderStart ln of
-                 Left e  -> error (show e)
-                 Right n -> n
   let ln' = T.strip $ T.dropAround (=='#') ln
   let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
                        then ln' <> "#"  -- escaped final #
@@ -446,9 +443,8 @@ listParser first first' = do
   let listStart = do
         initialSpaces <- takeWhile (==' ')
         listType <- parseListMarker
-        rest <- takeText
-        return (initialSpaces, listType, rest)
-  (initialSpaces, listType, rest) <-
+        return (initialSpaces, listType)
+  (initialSpaces, listType) <-
         case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
