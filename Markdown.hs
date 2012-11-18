@@ -683,7 +683,15 @@ pInBalancedTags mbtag = try $ do
 
 pHtmlBlock :: Parser Blocks
 pHtmlBlock = singleton . HtmlBlock <$>
-  ((pInBalancedTags Nothing <|> pHtmlComment))
+  (pInBalancedTags Nothing <|> pHtmlComment <|> pUnbalancedBlockTag)
+
+pUnbalancedBlockTag :: Parser Text
+pUnbalancedBlockTag = do
+  (tagtype, x) <- pHtmlTag
+  case tagtype of
+       Opening "hr" -> return x
+       Opening "br" -> return x
+       _            -> mzero
 
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
