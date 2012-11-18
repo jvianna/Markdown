@@ -4,7 +4,6 @@
 
 TODO
 
-* html blocks
 * optimizations
 * comment
 
@@ -645,39 +644,39 @@ blockHtmlTags = Set.fromList
    "h1", "h2", "h3", "h4", "h5", "h6", "video"]
 
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
-htmlBlockParser ln _ = do
-  undefined
+htmlBlockParser ln _ = go (parse pHtmlBlock ln)
+  where go x = case x of
+                    Fail unparsed _ _ -> return $ processLines
+                                                $ T.lines unparsed
+                    Partial f         -> nextLine BlockScan >>=
+                                             go . f .  maybe "" ("\n" <>)
+                    Done unparsed r   -> return $ r <>
+                                         if T.null unparsed
+                                            then empty
+                                            else processLines (T.lines unparsed)
 
-{-
-pInBalancedTags :: P Text
-pInBalancedTags = try $ do
-  (tagtype, opener) <- pHtmlTag
+pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
+pInBalancedTags mbtag = try $ do
+  (tagtype, opener) <- maybe pHtmlTag return mbtag
   case tagtype of
        SelfClosing _ -> return opener
        Closing _     -> mzero
        Opening name  -> (opener <>) <$> getRest name
   where getRest name = try $ do
-          nontag <- T.pack <$> many (satisfy (/='<'))
-          (tagtype', x') <- lookAhead pHtmlTag
+          nontag <- T.pack <$> many (notChar '<')
+          (tagtype', x') <- pHtmlTag
           case tagtype' of
                Closing n | n == name -> do
-                 _ <- pHtmlTag
                  return $ nontag <> x'
                Opening n | n == name -> do
-                 chunk <- pInBalancedTags
+                 chunk <- pInBalancedTags (Just (tagtype',x'))
                  rest <- getRest name
                  return $ nontag <> chunk <> rest
-               _  -> do
-                 _ <- pHtmlTag
-                 rest <- getRest name
-                 return $ (nontag <> x') <> rest
+               _  -> ((nontag <> x') <>) <$> getRest name
 
-
-pHtmlBlock :: P Blocks
+pHtmlBlock :: Parser Blocks
 pHtmlBlock = singleton . HtmlBlock <$>
-  ((pInBalancedTags <|> pHtmlComment) <* skipMany pBlankline)
-
--}
+  ((pInBalancedTags Nothing <|> pHtmlComment))
 
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
