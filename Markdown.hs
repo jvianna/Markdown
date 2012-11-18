@@ -42,8 +42,9 @@ import qualified Data.Map as M
 import Control.Monad.State
 import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
                     isDigit, isHexDigit, isAlphaNum, isLetter)
+import Data.List (intersperse)
 import Network.URI (parseURI, isAllowedInURI, escapeURIString)
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), mconcat)
 import Data.Foldable (foldMap, toList)
 import Control.Applicative hiding (optional,empty)
 import Data.Sequence (Seq, singleton, empty, (<|))
@@ -921,39 +922,37 @@ processBlocks refmap = fmap processBl
             x -> x
 
 renderBlocks :: Blocks -> Html
-renderBlocks = foldMap renderBlock
+renderBlocks blocks =
+  (mconcat . intersperse blocksep . map renderBlock . toList $ blocks) <> nl
   where renderBlock :: Block -> Html
         renderBlock (Header n ils)
-          | n >= 1 && n <= 5 = withNl $ ([H.h1,H.h2,H.h3,H.h4,H.h5] !! (n - 1))
-                                      $ renderInlines ils
-          | otherwise        = withNl $ H.p (renderInlines ils)
-        renderBlock (Para ils) = withNl $ H.p (renderInlines ils)
-        renderBlock (HRule) = withNl $ H.hr
-        renderBlock (Blockquote bs) =
-          withNl $ H.blockquote $ "\n" <> renderBlocks bs
+          | n >= 1 && n <= 5 = ([H.h1,H.h2,H.h3,H.h4,H.h5] !! (n - 1))
+                                  $ renderInlines ils
+          | otherwise        = H.p (renderInlines ils)
+        renderBlock (Para ils) = H.p (renderInlines ils)
+        renderBlock (HRule) = H.hr
+        renderBlock (Blockquote bs) = H.blockquote $ nl <> renderBlocks bs
         renderBlock (CodeBlock attr t) =
-          withNl $ case codeLang attr of
-                        Nothing   -> base
-                        Just lang -> base ! A.class_ (toValue lang)
+          case codeLang attr of
+                Nothing   -> base
+                Just lang -> base ! A.class_ (toValue lang)
           where base = H.pre $ H.code $ toHtml t
         renderBlock (List tight (Bullet _) items) =
-          withNl $ H.ul $ "\n" <> mapM_ (li tight) items
+          H.ul $ nl <> mapM_ (li tight) items
         renderBlock (List tight (Numbered _ n) items) =
           if n == 1 then base else base ! A.start (toValue n)
-          where base = withNl $ H.ol $ "\n" <> mapM_ (li tight) items
-        renderBlock (HtmlBlock raw) = withNl $ H.preEscapedToMarkup raw
-        withNl x = x <> "\n"
-
-li :: Bool -> Blocks -> Html
-li tight bs =
-  if tight
-     then case toList bs of
-                [Para zs]         -> H.li (renderInlines zs) <> "\n"
-                [Para zs, List{}] -> H.li (renderInlines zs <> "\n" <>
-                                       renderBlocks (Seq.drop 1 bs)) <> "\n"
-                _                 -> toLi bs
-     else toLi bs
- where toLi x = (H.li $ renderBlocks x) <> "\n"
+          where base = H.ol $ nl <> mapM_ (li tight) items
+        renderBlock (HtmlBlock raw) = H.preEscapedToMarkup raw
+        li :: Bool -> Blocks -> Html
+        li True bs = case toList bs of
+                          [Para zs]         -> H.li (renderInlines zs) <> nl
+                          [Para zs, List{}] -> H.li (renderInlines zs <>
+                             nl <> renderBlocks (Seq.drop 1 bs)) <> nl
+                          _                 -> toLi bs
+        li False bs = toLi bs
+        toLi x = (H.li $ renderBlocks x) <> nl
+        nl = "\n"
+        blocksep = "\n"
 
 renderInlines :: Inlines -> Html
 renderInlines = foldMap renderInline
