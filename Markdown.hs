@@ -352,7 +352,7 @@ blocksParser mbln =
                     , (scanIndentSpace, indentedCodeBlockParser)
                     , (scanAtxHeaderStart, atxHeaderParser)
                     , (scanCodeFenceLine, codeFenceParser)
-                    -- , (scanReference, referenceParser)
+                    , (scanReference, referenceParser)
                     -- , (scanNonindentSpaces >> scanListStart, listParser)
                     , (return (), parseLines)
                     ] ln
@@ -412,9 +412,8 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
                      []    -> Nothing
                      (l:_) -> Just l
 
-referenceParser :: BlockParser Blocks
-referenceParser = do
-  first <- maybe "" id <$> nextLine Consume BlockScan
+referenceParser :: Text -> Text -> BlockParser Blocks
+referenceParser first _ = do
   let getLines = do
              mbln <- nextLine Consume LineScan
              case mbln of
