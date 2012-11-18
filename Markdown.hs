@@ -451,7 +451,7 @@ listParser first first' = do
   let scanContentsIndent = () <$ count
          (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
   let starter = try $ string initialSpaces *> scanListStart (Just listType)
-  let blockScanner = scanContentsIndent
+  let blockScanner = scanContentsIndent <|> scanBlankline
   let lineScanner = nfb $
               scanContentsIndent >> scanSpaces >> scanListStart Nothing
   firstItem <- withBlockScanner blockScanner
