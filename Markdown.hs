@@ -4,7 +4,6 @@
 
 TODO
 
-* lists
 * html blocks
 * optimizations
 * comment
