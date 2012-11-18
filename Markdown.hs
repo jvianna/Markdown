@@ -223,7 +223,7 @@ codeFenceParserLine = try $ do
   return (T.pack [c,c,c] <> extra, rawattr)
 
 scanHtmlBlockStart :: Scanner
-scanHtmlBlockStart = pHtmlTag >>= guard . f . fst
+scanHtmlBlockStart = ((pHtmlTag >>= guard . f . fst) <|> (() <$ string "<!--"))
   where f (Opening name) = name `Set.member` blockHtmlTags
         f (SelfClosing name) = name `Set.member` blockHtmlTags
         f _ = False
