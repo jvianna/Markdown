@@ -347,7 +347,16 @@ blocksParser mbln =
        Nothing -> nextLine BlockScan >>= maybe (return empty) doLine
        Just ln -> doLine ln
  where doLine ln
-         | isEmptyLine ln = blocksParser Nothing
+         | isEmptyLine ln = do
+             xs <- gets inputLines
+             case xs of
+                  (x:_) | isEmptyLine x -> do
+                      -- two blanklines ends block parsing in a container
+                      bscs <- gets blockScanners
+                      if null bscs
+                         then blocksParser Nothing
+                         else return empty
+                  _ -> blocksParser Nothing
          | otherwise = do
           next <- tryScanners
                     [ (scanBlockquoteStart, blockquoteParser)
