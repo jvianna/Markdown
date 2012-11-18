@@ -8,4 +8,4 @@ test:
 
 clean:
 	-rm *.o *.hi Markdown bin/markdown bin/*.o bin/*.hi; \
-	  make -C tests clean
+	  -@make -C tests clean
