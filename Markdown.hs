@@ -349,8 +349,7 @@ blocksParser mbln =
          | otherwise = do
           next <- tryScanners
                     [ (scanBlockquoteStart, blockquoteParser ln)
-                    -- , ((scanIndentSpace >> nfb scanBlankline),
-                    --    indentedCodeBlockParser)
+                    , (scanIndentSpace, indentedCodeBlockParser ln)
                     , (scanAtxHeaderStart, atxHeaderParser ln)
                     -- , (scanCodeFenceLine, codeFenceParser)
                     -- , (scanReference, referenceParser)
@@ -370,11 +369,13 @@ blockquoteParser firstLine = singleton . Blockquote <$>
     $ withBlockScanner scanBlockquoteStart
         $ blocksParser $ Just firstLine >>= applyScanners [scanBlockquoteStart])
 
-indentedCodeBlockParser :: BlockParser Blocks
-indentedCodeBlockParser =
-  withLineScanner (scanIndentSpace <|> scanBlankline) $
-  singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
-     . reverse . dropWhile T.null . reverse <$> getLines
+indentedCodeBlockParser :: Text -> BlockParser Blocks
+indentedCodeBlockParser ln = do
+  ln' <- maybe (error "Indented code not indented") return $
+           applyScanners [scanIndentSpace] ln
+  lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
+  return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
+     . reverse . dropWhile T.null . reverse $ (ln':lns)
  where getLines = nextLine Consume LineScan >>=
                     maybe (return []) (\ln -> (ln:) <$> getLines)
 
