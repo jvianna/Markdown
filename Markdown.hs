@@ -242,13 +242,14 @@ parseListMarker = parseBullet <|> parseListNumber
 parseBullet :: Parser ListType
 parseBullet = do
   c <- satisfy isBulletChar
-  scanSpace
+  scanSpace <|> scanBlankline
   nfb $ count 2 $ try $ scanSpaces >> char c -- hrule
   return $ Bullet c
 
 parseListNumber :: Parser ListType
 parseListNumber =
-  (parseListNumberDig <|> parseListNumberPar) <* scanSpace <* scanSpaces
+  (parseListNumberDig <|> parseListNumberPar) <*
+     ((scanSpace <* scanSpaces) <|> scanBlankline)
   where parseListNumberDig = try $ do
            num <- decimal
            wrap <-  PeriodFollowing <$ char '.'
@@ -460,12 +461,16 @@ listParser first first' = do
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
                $ blocksParser $ Just first'
-  restItems <- listItemsParser starter blockScanner lineScanner
-  let isTight = null restItems -- TODO
-  return $ singleton $ List isTight listType (firstItem:restItems)
+  prev <- gets lastLine
+  let isTight = case prev of
+                     Just l | not (isEmptyLine l) -> True
+                     _                            -> False
+  restItems <- listItemsParser isTight starter blockScanner lineScanner
+  let isTight' = isTight || null restItems
+  return $ singleton $ List isTight' listType (firstItem:restItems)
 
-listItemsParser :: Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
-listItemsParser starter blockScanner lineScanner = do
+listItemsParser :: Bool -> Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
+listItemsParser isTight starter blockScanner lineScanner = do
   mbfirst <- withBlockScanner starter $ nextLine BlockScan
   case mbfirst of
        Nothing    -> return []
@@ -473,7 +478,11 @@ listItemsParser starter blockScanner lineScanner = do
          item <- withBlockScanner blockScanner
                  $ withLineScanner lineScanner
                  $ blocksParser $ Just first
-         rest <- listItemsParser starter blockScanner lineScanner
+         prev <- gets lastLine
+         rest <- case prev of
+                      Just l | isEmptyLine l && isTight -> return []
+                      _                                 ->
+                       listItemsParser isTight starter blockScanner lineScanner
          return (item:rest)
 
 {-
