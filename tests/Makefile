@@ -1,4 +1,5 @@
-TESTS=$(wildcard *.markdown */*.markdown)
+TESTDIR ?= *
+TESTS=$(wildcard $(TESTDIR)/*.markdown)
 DIFFS=$(patsubst %.markdown,%.diff,$(TESTS))
 PROG ?= ../bin/markdown
 
