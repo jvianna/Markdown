@@ -569,11 +569,7 @@ pAnyChar :: Parser Char
 pAnyChar = pSatisfy (const True)
 
 pNonspaceChar :: Parser Char
-pNonspaceChar = pSatisfy isNonspaceChar
-  where isNonspaceChar ' '  = False
-        isNonspaceChar '\n' = False
-        isNonspaceChar '\r' = False
-        isNonspaceChar _    = True
+pNonspaceChar = pSatisfy (not . isWhitespace)
 
 data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
@@ -618,8 +614,9 @@ pQuoted c = try $ do
 
 pLinkLabel :: Parser Text
 pLinkLabel = try $ char '[' *> (T.concat <$>
-  (manyTill (regChunk <|> bracketed <|> codeChunk) (char ']')))
-  where regChunk = T.pack <$> many1 (pSatisfy (notInClass "`[]"))
+  (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
+  where regChunk = takeWhile1 (\c -> c /='`' && c /='[' && c /=']' && c /='\\')
+        escaped  = T.singleton <$> pEscapedChar
         codeChunk = snd <$> pCode'
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
