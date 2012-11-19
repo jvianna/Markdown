@@ -739,7 +739,7 @@ isWordChar c = isAlphaNum c
 pStr :: Parser Inlines
 pStr = do
   let strChunk = takeWhile1 isWordChar
-  let underscore = string "_"
+  let underscore = skip (=='_')
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
   if s `elem` uriProtocols
      then try (pUri s) <|> return (singleton $ Str s)
