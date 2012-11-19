@@ -5,8 +5,10 @@
 TODO
 
 * factor out getLines
+* try it with bytestrings to check performance against C versions
 * optimizations
-* comment
+* comment the code, explaining parsing procedure in English and noting
+  any controversial decisions
 
 QUESTIONS
 
