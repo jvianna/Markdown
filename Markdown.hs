@@ -850,7 +850,7 @@ pInlineLink lab = try $ do
 
 pReferenceLink :: ReferenceMap -> Text -> Inlines -> Parser Inlines
 pReferenceLink refmap rawlab lab = try $ do
-  ref <- option rawlab $ try $ scanSpaces >> pLinkLabel
+  ref <- option rawlab $ try $ scanSpnl >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
   case lookupLinkReference refmap ref' of
        Just (url,tit)  -> return $ singleton $ Link lab url tit
