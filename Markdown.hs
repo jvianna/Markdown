@@ -347,18 +347,18 @@ getLinesTill :: (Text -> Bool) -> BlockParser [Text]
 getLinesTill f = nextLine LineScan >>=
   maybe (return []) (\l -> if f l then return [] else (l:) <$> getLines)
 
-tabFilter :: Int -> Text -> Text
-tabFilter tabstop = T.concat . pad . T.split (== '\t')
+tabFilter :: Text -> Text
+tabFilter = T.concat . pad . T.split (== '\t')
   where pad []  = []
         pad [t] = [t]
         pad (t:ts) = let tl = T.length t
-                         n  = tl + tabstop - (tl `mod` tabstop)
+                         n  = tl + 4 - (tl `mod` 4)
                          in  T.justifyLeft n ' ' t : pad ts
 
 parseBlocks :: Text -> (Blocks, ReferenceMap)
 parseBlocks t = (bs, references s)
   where (bs, s) = runState (blocksParser Nothing)
-                    BlockParserState{ inputLines = map (tabFilter 4) $ T.lines t
+                    BlockParserState{ inputLines = map tabFilter $ T.lines t
                                     , lastLine = Nothing
                                     , references = M.empty
                                     , lineScanners = []
