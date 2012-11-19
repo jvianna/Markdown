@@ -129,7 +129,11 @@ normalizeReference :: Text -> Text
 normalizeReference = T.toUpper . T.concat . T.split isWhitespace
 
 isWhitespace :: Char -> Bool
-isWhitespace c = c == ' ' || c == '\t' || c == '\r' || c == '\n'
+isWhitespace ' '  = True
+isWhitespace '\t' = True
+isWhitespace '\n' = True
+isWhitespace '\r' = True
+isWhitespace _    = False
 
 addLinkReference :: Text -> (Text, Text) -> BlockParser ()
 addLinkReference key (url,tit) = modify $ \st ->
