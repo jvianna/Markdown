@@ -5,7 +5,6 @@
 TODO
 
 * factor out getLines
-* try it with bytestrings to check performance against C versions
 * optimizations
 * comment the code, explaining parsing procedure in English and noting
   any controversial decisions
@@ -69,7 +68,7 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
-import Debug.Trace
+-- import Debug.Trace
 -- tr s = trace s (return ())
 
 
