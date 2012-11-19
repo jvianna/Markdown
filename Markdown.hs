@@ -1,48 +1,122 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{-
+-- INTRODUCTION
+--
+-- This is an experimental Markdown processor.  It aims to process
+-- Markdown efficiently and in the most forgiving possible way.
+--
+-- There is no such thing as an invalid Markdown document. Any
+-- string of characters is valid Markdown.  So the processor should
+-- finish efficiently no matter what input it gets. Garbage in
+-- should not cause an error or exponential slowdowns.
+--
+-- This processor adds the following Markdown extensions:
+--
+-- * All absolute URLs are automatically made into hyperlinks, where
+--   inside `<>` or not.
+--
+-- * Fenced code blocks with attributes are allowed.  These begin with
+--   a line of three or more backticks or tildes, followed by an
+--   optional language name and possibly other metadata.  They end
+--   with a line of backticks or tildes (the same character as started
+--   the code block) of at least the length of the starting line.
+--
+-- In departs from the markdown syntax document in the following ways:
+--
+-- * The starting number of an ordered list is now significant.
+--   Other numbers are ignored, so you can still use `1.` for each
+--   list item.
+--
+-- * In addition to the `1.` form, you can use `1)` or `(1)` in
+--   your ordered lists.  A new list starts if you change the
+--   form of the delimiter. So, the following is two lists:
+--
+--      1. one
+--      2. two
+--      1) one
+--      2) two
+--
+-- * A new bullet lists starts if you change the bullet marker.
+--   So, the following is two consecutive bullet lists:
+--
+--      + one
+--      + two
+--      - one
+--      - two
+--
+-- * A new list starts if you change from tight spacing to loose.
+--   So, the following is parsed as a tight list followed by a loose
+--   list:
+--
+--      - one
+--      - two
+--
+--      - one
+--
+--      - two
+--
+-- * Two consecutive blank lines breaks out of a list or blockquote
+--   construction.  So, the following is a list followed by a code
+--   block:
+--
+--      -   one
+--
+--      -   two
+--
+--
+--          code
+--
+-- * Block elements inside list items need not be indented four
+--   spaces.  If they are indented beyond the bullet or numerical
+--   list marker, they will be considered additional blocks inside
+--   the list item.  So, the following is a list item with two
+--   paragraphs:
+--
+--      - one
+--
+--        two
+--
+--   This implies that code blocks inside list items must be indented
+--   four spaces past the first column after the bullet or numerical
+--   list marker.
+--
+-- It resolves the following issues left vague in the markdown syntaxx
+-- document:
+--
+-- * HTML blocks may not contain blank lines.  (This is partly a
+--   concession to parsing efficiency, as it avoids expensive lookaheads
+--   when there is no closing tag.)
+--
+-- * A list is considered "tight" if (a) it has only one item or
+--   (b) there is no blank space between any two consecutive items.
+--   If a list is "tight," then list items consisting of a single
+--   paragraph or a paragraph followed by a sublist will be rendered
+--   without `<p>` tags.
+--
+-- * Sublists work like other block elements inside list items;
+--   they must be indented past the bullet or numerical list marker
+--   (but no more than three spaces past, or they will be interpreted
+--   as indented code).
+--
+-- TODO
+--
+-- * Comment the code, explaining parsing procedure in English and noting
+--   any controversial decisions.
+--
+-- QUESTIONS
+--
+-- * markdown=1 attribute?
+-- * does a tight list end once we start getting loose items?
+--   YES - NOT YET VICE VERSA - should it be?
+-- * two blockquotes w blank line between
+--    NO - but two blank lines separate blockquotes, just like lists
+-- * store entities as chars or entities?
+--    CURRENTLY AS ENTITIES
+-- * should we retain user line breaks?
+--   YES so far...
+-- * things like: [link *with emph]*](/url) ?
 
-TODO
-
-* comment the code, explaining parsing procedure in English and noting
-  any controversial decisions
-
-QUESTIONS
-
-* nested quotes in link title?  seems silly, but some impls do?
-  YES
-* limit html blocks to list of html block tags?
-  YES
-* how exactly do html blocks work?
-  to avoid getting bogged down in lookaheads for html
-  blocks, we disallow blank lines in html blocks.
-  not sure if original markdown did that, but it seems a fair
-  compromise.
-* allow html block comments to include blanklines?
-* markdown=1 attribute?
-* do we want the linebreak at end of code block?
-  YES. TENTATIVELY. FOR CONFORMITY.
-* in numbered lists, do we store list style?
-  YES.
-* in bullet lists, does new style start new list?
-  YES. TENTATIVELY.
-* is a 1-item list tight or loose?
-  TIGHT.
-* does a tight list end once we start getting loose items?
-  YES - NOT YET VICE VERSA
-* two blank lines end a list?
-   YES
-* two blockquotes w blank line between
-   NO - but two blank lines separate blockquotes, just like lists
-* store entities as chars or entities?
-   CURRENTLY AS ENTITIES
-* should we retain user line breaks?
-  YES so far...
-* things like: [link *with emph]*](/url) ?
-
--}
-
-module Markdown {-(parseMarkdown, renderBlocks)-} where
+module Markdown (parseMarkdown, renderBlocks) where
 import Prelude hiding (takeWhile)
 import qualified Data.Map as M
 import Control.Monad.State
@@ -569,9 +643,6 @@ pSatisfy p =
   satisfy (\c -> c /= '\\' && p c)
    <|> (char '\\' *> satisfy (\c -> isEscapable c && p c))
 
-pAnyChar :: Parser Char
-pAnyChar = pSatisfy (const True)
-
 pNonspaceChar :: Parser Char
 pNonspaceChar = pSatisfy (not . isWhitespace)
 
@@ -794,11 +865,6 @@ pUri protocol = do
 
 escapeUri :: Text -> Text
 escapeUri = T.pack . escapeURIString (not . isSpace) . T.unpack
-
-isEnclosureChar :: Char -> Bool
-isEnclosureChar '*' = True
-isEnclosureChar '_' = True
-isEnclosureChar _   = False
 
 pEnclosure :: Char -> ReferenceMap -> Parser Inlines
 pEnclosure c refmap = do
