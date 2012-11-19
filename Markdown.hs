@@ -637,10 +637,16 @@ pLinkUrl = try $ do
           inParens x = "(" <> x <> ")"
 
 pLinkTitle :: Parser Text
-pLinkTitle = T.pack <$> (pLinkTitleDQ <|> pLinkTitleSQ <|> pLinkTitleP)
-  where pLinkTitleDQ = try $ char '"' *> manyTill pAnyChar (char '"')
-        pLinkTitleSQ = try $ char '\'' *> manyTill pAnyChar (char '\'')
-        pLinkTitleP  = try $ char '(' *> manyTill pAnyChar (char ')')
+pLinkTitle = try $ do
+  c <- satisfy (\c -> c == '"' || c == '\'' || c == '(')
+  nfb $ skip isWhitespace
+  nfbChar ')'
+  let ender = if c == '(' then ')' else c
+  let pEnder = try $ char ender <* nfb (skip isAlphaNum)
+  let regChunk = takeWhile1 (/= ender)
+  let nestedChunk = (\x -> T.singleton c <> x <> T.singleton ender)
+                      <$> pLinkTitle
+  T.concat <$> manyTill (regChunk <|> nestedChunk) pEnder
 
 blockHtmlTags :: Set.Set Text
 blockHtmlTags = Set.fromList
