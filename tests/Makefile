@@ -10,7 +10,7 @@ all: $(DIFFS)
 	  let TESTS=TESTS+1; \
 	  [ -s $$f ] || let PASS=PASS+1; \
 	done; \
-	echo "\x1b[1m$$PASS of $$TESTS tests passed.\x1b[0m"; \
+	echo -e "\033[1m$$PASS of $$TESTS tests passed.\033[0m"; \
 	if [ $$TESTS -eq $$PASS ]; then exit 0; else exit 1; fi
 
 %.actual.html: %.markdown $(PROG)
@@ -30,10 +30,10 @@ endif
 %.diff: %.expected.html %.actual.html
 	diff --unified=1 $+ > $@ ; \
 	  if [ -s $@ ]; then \
-	  	echo "\x1b[1;31m✘ $(patsubst %.diff,%,$@)\x1b[0m"; \
-		echo "\x1b[0;36m" ; cat $@; echo "\x1b[0m"; \
+		echo -e "\033[1;31m✘ $(patsubst %.diff,%,$@)\033[0m"; \
+		echo -e "\033[0;36m" ; cat $@; echo -e "\033[0m"; \
 	  else \
-	  	echo "\x1b[1;32m✓ $(patsubst %.diff,%,$@)\x1b[0m"; \
+		echo -e "\033[1;32m✓ $(patsubst %.diff,%,$@)\033[0m"; \
 	  fi
 
 .PHONY: all clean
