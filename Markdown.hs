@@ -749,7 +749,7 @@ pStr = do
   let strChunk = takeWhile1 isWordChar
   let underscore = skip (=='_')
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
-  if s `elem` uriProtocols
+  if s `Set.member` uriProtocolsSet
      then try (pUri s) <|> return (singleton $ Str s)
      else return (singleton $ Str s)
 
@@ -759,6 +759,9 @@ pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
 uriProtocols :: [Text]
 uriProtocols =
   [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
+
+uriProtocolsSet :: Set.Set Text
+uriProtocolsSet = Set.fromList $ uriProtocols ++ map T.toUpper uriProtocols
 
 pUri :: Text -> Parser Inlines
 pUri protocol = do
@@ -928,7 +931,7 @@ scanMatches scanner t =
 
 startsWithProtocol :: Text -> Bool
 startsWithProtocol =
-  scanMatches $ choice (map string uriProtocols) >> skip (== ':')
+  scanMatches $ choice (map stringCI uriProtocols) >> skip (== ':')
 
 autoLink :: Text -> Inlines
 autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
