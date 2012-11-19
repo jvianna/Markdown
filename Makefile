@@ -9,7 +9,7 @@ test:
 prof: bin/markdown-prof
 
 bin/markdown-prof: bin/markdown.hs Markdown.hs
-	ghc --make -auto-all -prof -o $@ bin/markdown.hs
+	ghc --make -rtsopts -auto-all -prof -o $@ bin/markdown.hs
 
 clean:
 	-@rm *.o *.hi bin/markdown bin/markdown-prof bin/*.o bin/*.hi; \
