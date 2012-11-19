@@ -129,8 +129,6 @@
 -- QUESTIONS
 --
 -- * markdown=1 attribute?
--- * does a tight list end once we start getting loose items?
---   YES - NOT YET VICE VERSA - should it be?
 -- * two blockquotes w blank line between
 --    NO - but two blank lines separate blockquotes, just like lists
 -- * store entities as chars or entities?
@@ -721,6 +719,12 @@ pReference = do
   endOfInput
   return (lab, url, tit)
 
+-- A link label [like this].  Note the precedence:  code backticks have
+-- precedence over label bracket markers, which have precedence over
+-- *, _, and other inline formatting markers.
+-- So, 2 below contains a link while 1 does not:
+-- 1. [a link `with a ](/url)` character
+-- 2. [a link *with emphasized ](/url) text*
 pLinkLabel :: Parser Text
 pLinkLabel = char '[' *> (T.concat <$>
   (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
@@ -730,6 +734,9 @@ pLinkLabel = char '[' *> (T.concat <$>
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
 
+-- A URL in a link or reference.  This may optionally be contained
+-- in `<..>`; otherwise whitespace and unbalanced right parentheses
+-- aren't allowed.  Newlines aren't allowed in any case.
 pLinkUrl :: Parser Text
 pLinkUrl = do
   inPointy <- (char '<' >> return True) <|> return False
@@ -742,6 +749,10 @@ pLinkUrl = do
                          manyTill (regChunk <|> parenChunk) (char ')'))
           inParens x = "(" <> x <> ")"
 
+-- A link title, single or double quoted or in parentheses.
+-- Note that Markdown.pl doesn't allow the parenthesized form in
+-- inline links -- only in references -- but this restriction seems
+-- arbitrary, so we remove it here.
 pLinkTitle :: Parser Text
 pLinkTitle = do
   c <- satisfy (\c -> c == '"' || c == '\'' || c == '(')
@@ -754,7 +765,7 @@ pLinkTitle = do
                       <$> pLinkTitle
   T.concat <$> manyTill (regChunk <|> nestedChunk) pEnder
 
-
+-- Parse a list.
 listParser :: Text -> Text -> BlockParser Blocks
 listParser first first' = do
   let listStart = do
@@ -765,25 +776,33 @@ listParser first first' = do
         case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
+  -- the indent required for blocks to be inside the list item:
   let scanContentsIndent = () <$ count
          (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
   let starter = string initialSpaces *> scanListStart (Just listType)
+  -- beginning of a block in the list item must be indented by
+  -- scancontentsindent.
   let blockScanner = scanContentsIndent <|> scanBlankline
+  -- but a line within a block can omit that initial indent.
   let lineScanner = opt (scanContentsIndent) >>
                     nfb (scanSpaces >> scanListStart Nothing)
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
                $ blocksParser $ Just first'
   prev <- gets lastLine
+  -- Check to see if there is blank space before the next list item.
+  -- If not, we have a tight list.
   let isTight = case prev of
                      Just l | not (isEmptyLine l) -> True
                      _                            -> False
   restItems <- listItemsParser isTight starter blockScanner lineScanner
-  let isTight' = isTight || null restItems
+  let isTight' = isTight || null restItems  -- a one-item list is tight.
   return $ singleton $ List isTight' listType (firstItem:restItems)
 
+-- Parse items after first list item.
 listItemsParser :: Bool -> Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
 listItemsParser isTight starter blockScanner lineScanner = do
+  -- Get next line and chomp off list marker.
   mbfirst <- withBlockScanner starter $ nextLine BlockScan
   case mbfirst of
        Nothing    -> return []
@@ -793,11 +812,13 @@ listItemsParser isTight starter blockScanner lineScanner = do
                  $ blocksParser $ Just first
          prev <- gets lastLine
          rest <- case prev of
+                      -- We stop list parsing if we go from tight to loose:
                       Just l | isEmptyLine l && isTight -> return []
-                      _                                 ->
+                      _  ->
                        listItemsParser isTight starter blockScanner lineScanner
          return (item:rest)
 
+-- Parse lines inside a paragraph.
 parseLines :: Text -> Text -> BlockParser Blocks
 parseLines _ firstLine = do
   processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
@@ -808,6 +829,14 @@ parseLines _ firstLine = do
                  >> nfb scanCodeFenceLine
                  >> nfb (scanSpaces >> scanListStart Nothing)
 
+-- Process a list of lines parsed by parseLines.
+-- Check for setext headers and hrules.  Really this is only
+-- needed for setext headers, since we don't know whether a
+-- line is part of a setext header til we parse the next line.
+-- We could have added 'nfb scanHRuleLine' to paraLine above
+-- and added a separate handler for hrules.  But because some hrule
+-- lines are indistinguishable from setext header lines, it's easiest
+-- to do it this way.
 processLines :: [Text] -> Blocks
 processLines [] = empty
 processLines ws =
@@ -839,31 +868,33 @@ processLines ws =
         isSpecialLine x = isSetextLine x || isHruleLine x
         markdown = singleton . Markdown . T.strip
 
--- Utility parsers.
+-- Parsers that recognize charcater escapes.
 
+-- Parse a backslash-escaped character.
 pEscapedChar :: Parser Char
 pEscapedChar = char '\\' *> satisfy isEscapable
 
--- parses a character satisfying the predicate, but understands escaped
--- symbols
+-- Parses a (possibly escaped) character satisfying the predicate.
 pSatisfy :: (Char -> Bool) -> Parser Char
 pSatisfy p =
   satisfy (\c -> c /= '\\' && p c)
    <|> (char '\\' *> satisfy (\c -> isEscapable c && p c))
 
+-- Parses a (possibly escaped) nonspace character.
 pNonspaceChar :: Parser Char
 pNonspaceChar = pSatisfy (not . isWhitespace)
 
+-- Simple representation of HTML tag.
 data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
--- returns name of tag needed to close, and whole tag
+-- Returns tag type and whole tag.
 pHtmlTag :: Parser (HtmlTagType, Text)
 pHtmlTag = do
   char '<'
   -- do not end the tag with a > character in a quoted attribute.
   closing <- (char '/' >> return True) <|> return False
-  tagname <- T.toLower <$>
-                takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
+  tagname <- takeWhile1 (\c -> isAlphaNum c || c == '?' || c == '!')
+  let tagname' = T.toLower tagname
   let attr = do ss <- takeWhile isSpace
                 x <- letter
                 xs <- takeWhile (\c -> isAlphaNum c || c == ':')
@@ -875,26 +906,30 @@ pHtmlTag = do
   final <- takeWhile (\c -> isSpace c || c == '/')
   char '>'
   let tagtype = if closing
-                   then Closing tagname
+                   then Closing tagname'
                    else case T.stripSuffix "/" final of
-                         Just _  -> SelfClosing tagname
-                         Nothing -> Opening tagname
+                         Just _  -> SelfClosing tagname'
+                         Nothing -> Opening tagname'
   return (tagtype,
           T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
 
+-- Parses a quoted attribute value.
+pQuoted :: Char -> Parser Text
+pQuoted c = do
+  skip (== c)
+  contents <- takeTill (== c)
+  skip (== c)
+  return (T.singleton c <> contents <> T.singleton c)
+
+-- Parses an HTML comment. This isn't really correct to spec, but should
+-- do for now.
 pHtmlComment :: Parser Text
 pHtmlComment = do
   string "<!--"
   rest <- manyTill anyChar (string "-->")
   return $ "<!--" <> T.pack rest <> "-->"
 
-pQuoted :: Char -> Parser Text
-pQuoted c = do
-  char c
-  contents <- takeTill (== c)
-  char c
-  return (T.singleton c <> contents <> T.singleton c)
-
+-- List of block level tags for HTML 5.
 blockHtmlTags :: Set.Set Text
 blockHtmlTags = Set.fromList
  [ "article", "header", "aside", "hgroup", "blockquote", "hr",
@@ -905,6 +940,15 @@ blockHtmlTags = Set.fromList
    "figure", "thead", "footer", "footer", "tr", "form", "ul",
    "h1", "h2", "h3", "h4", "h5", "h6", "video"]
 
+-- Parses an HTML block: block-level content in balanced tags
+-- (or an unbalanced hr or br), or an HTML comment.  The docs
+-- say: "block-level HTML elements — e.g.
+-- <div>, <table>, <pre>, <p>, etc. — must be separated from
+-- surrounding content by blank lines, and the start and end tags
+-- of the block should not be indented with tabs or spaces."
+-- We don't enforce the requirement on end tags, which seems
+-- unnecessary and is probably left over from when Markdown.pl
+-- didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
   lns <- withLineScanner (nfb scanBlankline) getLines
@@ -913,6 +957,14 @@ htmlBlockParser ln _ = do
        Left _  -> return $ processLines (ln:lns)
        Right r -> return r
 
+pHtmlBlock :: Parser Blocks
+pHtmlBlock = singleton . HtmlBlock <$>
+  (pInBalancedTags Nothing <|> pHtmlComment <|> pUnbalancedBlockTag)
+
+-- Parse content in balanced tags. If the parameter is
+-- Just (tagtype, tag), then we don't try to parse the
+-- opening tag, and assume that it has been parsed as
+-- specified. Otherwise, we parse the opening tag too.
 pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
 pInBalancedTags mbtag = do
   (tagtype, opener) <- maybe pHtmlTag return mbtag
@@ -932,10 +984,8 @@ pInBalancedTags mbtag = do
                  return $ nontag <> chunk <> rest
                _  -> ((nontag <> x') <>) <$> getRest name
 
-pHtmlBlock :: Parser Blocks
-pHtmlBlock = singleton . HtmlBlock <$>
-  (pInBalancedTags Nothing <|> pHtmlComment <|> pUnbalancedBlockTag)
-
+-- We allow <hr> and <br> unclosed, as this is common.
+-- Other cases like this?
 pUnbalancedBlockTag :: Parser Text
 pUnbalancedBlockTag = do
   (tagtype, x) <- pHtmlTag
@@ -944,6 +994,8 @@ pUnbalancedBlockTag = do
        Opening "br" -> return x
        _            -> mzero
 
+-- Parse a text into inlines, resolving reference links
+-- using the reference map.
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
   case parseOnly (msum <$> many (pInline refmap) <* endOfInput) t of
@@ -954,16 +1006,20 @@ pInline :: ReferenceMap -> Parser Inlines
 pInline refmap =
            pSpace
        <|> pStr
-       <|> pEnclosure '*' refmap
+       <|> pEnclosure '*' refmap  -- strong/emph
        <|> pEnclosure '_' refmap
        <|> pLink refmap
        <|> pImage refmap
        <|> pCode
        <|> pEntity
        <|> pRawHtml
-       <|> pInPointyBrackets
+       <|> pAutolink
        <|> pSym
 
+-- Parse spaces or newlines, and determine whether
+-- we have a regular space, a line break (two spaces before
+-- a newline), or a soft break (newline without two spaces
+-- before).
 pSpace :: Parser Inlines
 pSpace = do
   ss <- takeWhile1 isWhitespace
@@ -1000,7 +1056,7 @@ pStr = do
        isWordChar c = isAlphaNum c
 
 pSym :: Parser Inlines
-pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
+pSym = singleton . Str . T.singleton <$> pNonspaceChar
 
 uriProtocols :: [Text]
 uriProtocols =
@@ -1154,8 +1210,8 @@ pHexEntity = do
 pRawHtml :: Parser Inlines
 pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 
-pInPointyBrackets :: Parser Inlines
-pInPointyBrackets = do
+pAutolink :: Parser Inlines
+pAutolink = do
   char '<'
   t <- takeWhile1 (/='>')
   char '>'
