@@ -4,6 +4,7 @@
 --
 -- This is an experimental Markdown processor.  It aims to process
 -- Markdown efficiently and in the most forgiving possible way.
+-- (It is about 7X faster than pandoc and uses a fifth the memory.)
 --
 -- There is no such thing as an invalid Markdown document. Any
 -- string of characters is valid Markdown.  So the processor should
@@ -80,6 +81,9 @@
 --   four spaces past the first column after the bullet or numerical
 --   list marker.
 --
+-- * All symbols and punctuation marks can be backslash-escaped,
+--   not just those with a use in Markdown.
+
 -- It resolves the following issues left vague in the markdown syntaxx
 -- document:
 --
@@ -98,10 +102,7 @@
 --   (but no more than three spaces past, or they will be interpreted
 --   as indented code).
 --
--- TODO
---
--- * Comment the code, explaining parsing procedure in English and noting
---   any controversial decisions.
+-- * ATX headers must have a space after the initial `###`s.
 --
 -- QUESTIONS
 --
@@ -143,25 +144,34 @@ import Text.Blaze.Html hiding(contents)
 
 -- for debugging
 -- import Debug.Trace
--- tr s = trace s (return ())
-
 
 -- Structured representation of a document.
 
-data CodeAttr = CodeAttr { codeLang :: Maybe Text }
-              deriving Show
-
+-- Block-level elements.
 data Block = Para Inlines
            | Header Int Inlines
-           | HRule
            | Blockquote Blocks
            | List Bool ListType [Blocks]
            | CodeBlock CodeAttr Text
            | HtmlBlock Text
+           | HRule
            deriving Show
 
+-- Attributes for fenced code blocks.  More structure
+-- can be added later, or perhaps a catch-all to contain
+-- the remainder of the line after the language.
+data CodeAttr = CodeAttr { codeLang :: Maybe Text }
+              deriving Show
+
+data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
+data NumWrapper = PeriodFollowing | ParenFollowing | ParensAround
+                deriving (Eq,Show)
+
+-- We operate with sequences instead of lists, because
+-- they allow more efficient appending on to the end.
 type Blocks = Seq Block
 
+-- Inline elements.
 data Inline = Str Text
             | Space
             | SoftBreak
@@ -169,21 +179,16 @@ data Inline = Str Text
             | Emph Inlines
             | Strong Inlines
             | Code Text
-            | Link Inlines Text Text
-            | Image Inlines Text Text
+            | Link Inlines Text {- URL -} Text {- title -}
+            | Image Inlines Text {- URL -} Text {- title -}
             | Entity Text
             | RawHtml Text
-            | Markdown Text
-            | Err Text Text
+            | Markdown Text -- Raw markdown to be parsed later.
             deriving Show
 
 type Inlines = Seq Inline
 
-data NumWrapper = PeriodFollowing | ParenFollowing | ParensAround
-                deriving (Eq,Show)
-
-data ListType = Bullet Char | Numbered NumWrapper Int deriving Show
-
+-- Returns width of a list marker based on the ListType.
 listMarkerWidth :: ListType -> Int
 listMarkerWidth (Bullet _) = 1
 listMarkerWidth (Numbered wrap n) =
@@ -193,22 +198,66 @@ listMarkerWidth (Numbered wrap n) =
          | n < 100   -> 2
          | n < 1000  -> 3
          | n < 10000 -> 4
-         | otherwise -> 5
+         | otherwise -> 5  -- nobody counts this high, right?
 
--- Defining the parser.
+-- Utility functions.
 
-type ReferenceMap = M.Map Text (Text, Text)
-
--- link references are case sensitive and ignore line breaks
-normalizeReference :: Text -> Text
-normalizeReference = T.toUpper . T.concat . T.split isWhitespace
-
+-- These are the whitespace characters that are significant in
+-- parsing markdown. We can treat \160 (nonbreaking space) etc.
+-- as regular characters.  This function should be considerably
+-- faster than the unicode-aware isSpace from Data.Char.
 isWhitespace :: Char -> Bool
 isWhitespace ' '  = True
 isWhitespace '\t' = True
 isWhitespace '\n' = True
 isWhitespace '\r' = True
 isWhitespace _    = False
+
+-- Code fences can use ``` or ~~~.
+isCodeFenceChar :: Char -> Bool
+isCodeFenceChar '`' = True
+isCodeFenceChar '~' = True
+isCodeFenceChar _   = False
+
+-- Bullets are - + *.
+isBulletChar :: Char -> Bool
+isBulletChar '-' = True
+isBulletChar '+' = True
+isBulletChar '*' = True
+isBulletChar _   = False
+
+-- Hrules can be made of * - or _.
+isHRuleChar :: Char -> Bool
+isHRuleChar '*'  = True
+isHRuleChar '-'  = True
+isHRuleChar '_'  = True
+isHRuleChar _    = False
+
+-- A line with all space characters is regarded as empty.
+-- Note: we strip out tabs.
+isEmptyLine :: Text -> Bool
+isEmptyLine = T.all (==' ')
+
+-- The original Markdown only allowed certain symbols
+-- to be backslash-escaped.  It was hard to remember
+-- which ones could be, so we now allow any punctuation mark or
+-- symbol to be escaped, whether or not it has a use in Markdown.
+isEscapable :: Char -> Bool
+isEscapable c = isSymbol c || isPunctuation c
+
+
+-- Link references.
+
+-- A map of link references.
+type ReferenceMap = M.Map Text (Text, Text)
+
+-- Link references are case sensitive and ignore line breaks
+-- and repeated spaces.
+-- So, [APPLES are good] == [Apples are good] ==
+-- [Apples
+-- are     good].
+normalizeReference :: Text -> Text
+normalizeReference = T.toUpper . T.concat . T.split isWhitespace
 
 addLinkReference :: Text -> (Text, Text) -> BlockParser ()
 addLinkReference key (url,tit) = modify $ \st ->
@@ -217,25 +266,36 @@ addLinkReference key (url,tit) = modify $ \st ->
 lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
 lookupLinkReference refmap key = M.lookup (normalizeReference key) refmap
 
+-- Scanners.
+
+-- Scanners are implemented here as attoparsec parsers,
+-- which consume input and capture nothing.  They could easily
+-- be implemented as regexes in other languages, or hand-coded.
+-- With the exception of scanSpnl, they are all intended to
+-- operate on a single line of input (so endOfInput = endOfLine).
 type Scanner = Parser ()
 
--- Try to match the scanner, returning Just the remaining text if
--- it matches, Nothing otherwise.
+-- Try a list of scanners, in order from first to last,
+-- returning Just the remaining text if they all match,
+-- Nothing if any of them fail.  Note that
+-- applyScanners [a,b,c] == applyScanners [a >> b >> c].
 applyScanners :: [Scanner] -> Text -> Maybe Text
 applyScanners scanners t =
   case parseOnly (sequence_ scanners >> takeText) t of
        Right t'   -> Just t'
        Left _err  -> Nothing
 
--- Scanners
-
+-- Scan the beginning of a blockquote:  up to three
+-- spaces indent, the `>` character, and an optional space.
 scanBlockquoteStart :: Scanner
 scanBlockquoteStart =
   scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
+-- Scan four spaces.
 scanIndentSpace :: Scanner
 scanIndentSpace = () <$ count 4 (skip (==' '))
 
+-- Scan 0-3 spaces.
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
   (scanChar ' ' >>
@@ -244,27 +304,33 @@ scanNonindentSpaces =
     ) <|> return ()
   ) <|> return ()
 
+-- Scan a specified character.
 scanChar :: Char -> Scanner
 scanChar c = char c >> return ()
 
+-- Scan a blankline.
 scanBlankline :: Scanner
 scanBlankline = skipWhile (==' ') *> endOfInput
 
+-- Scan a space.
 scanSpace :: Scanner
 scanSpace = skip (==' ')
 
--- 0 or more spaces
+-- Scan 0 or more spaces
 scanSpaces :: Scanner
 scanSpaces = skipWhile (==' ')
 
+-- Scan 0 or more spaces, and optionally a newline
+-- and more spaces.
 scanSpnl :: Scanner
 scanSpnl = scanSpaces *> opt (endOfLine *> scanSpaces)
 
--- optional
+-- Try a scanner; return success even if it doesn't match.
 opt :: Scanner -> Scanner
 opt s = option () (s >> return ())
 
--- not followed by
+-- Not followed by: Succeed without consuming input if the specified
+-- scanner would not succeed.
 nfb :: Parser a -> Scanner
 nfb s = do
   succeeded <- option False (True <$ s)
@@ -272,34 +338,45 @@ nfb s = do
      then mzero
      else return ()
 
+-- Succeed if not followed by a character. Consumes no input.
 nfbChar :: Char -> Scanner
 nfbChar c = nfb (skip (==c))
 
+-- Parse the sequence of `#` characters that begins an ATX
+-- header, and return the number of characters.  We require
+-- a space after the initial string of `#`s, as not all markdown
+-- implementations do. This is because (a) the ATX reference
+-- implementation requires a space, and (b) since we're allowing
+-- headers without preceding blank lines, requiring the space
+-- avoids accidentally capturing a line like `#8 toggle bolt` as
+-- a header.
 parseAtxHeaderStart :: Parser Int
 parseAtxHeaderStart = do
   hashes <- takeWhile1 (=='#')
   scanSpace
   return $ T.length hashes
 
+-- Scan an ATX header start, including the space.
 scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
+-- Scan a horizontal rule line: "...three or more hyphens, asterisks,
+-- or underscores on a line by themselves. If you wish, you may use
+-- spaces between the hyphens or asterisks."
 scanHRuleLine :: Scanner
 scanHRuleLine = do
   scanNonindentSpaces
-  c <- satisfy (\c -> c == '*' || c == '-' || c == '_')
+  c <- satisfy isHRuleChar
   count 2 $ scanSpaces >> char c
   skipWhile (\x -> x == ' ' || x == c)
   endOfInput
 
-isCodeFenceChar :: Char -> Bool
-isCodeFenceChar '`' = True
-isCodeFenceChar '~' = True
-isCodeFenceChar _   = False
-
+-- Scan a code fence line.
 scanCodeFenceLine :: Scanner
 scanCodeFenceLine = () <$ codeFenceParserLine
 
+-- Parse an initial code fence line, returning
+-- the fence part and the rest (after any spaces).
 codeFenceParserLine :: Parser (Text, Text)
 codeFenceParserLine = do
   c <- satisfy isCodeFenceChar
@@ -310,18 +387,19 @@ codeFenceParserLine = do
   endOfInput
   return (T.pack [c,c,c] <> extra, rawattr)
 
+-- Scan the start of an HTML block:  either an HTML tag or an
+-- HTML comment, with no indentation.
 scanHtmlBlockStart :: Scanner
 scanHtmlBlockStart = ((pHtmlTag >>= guard . f . fst) <|> (() <$ string "<!--"))
   where f (Opening name) = name `Set.member` blockHtmlTags
         f (SelfClosing name) = name `Set.member` blockHtmlTags
         f _ = False
 
-isBulletChar :: Char -> Bool
-isBulletChar '-' = True
-isBulletChar '+' = True
-isBulletChar '*' = True
-isBulletChar _   = False
-
+-- Scan the start of a list. If the parameter is Nothing, allow
+-- any bullet or list number marker indented no more than 3 spaces.
+-- If it is Just listType, then only succeed if the marker is
+-- of the appropriate type.  (It must match bullet and number
+-- wrapping style, but not the number itself.)
 scanListStart :: Maybe ListType -> Parser ()
 scanListStart Nothing = () <$ parseListMarker
 scanListStart (Just (Bullet   c)) = do
@@ -335,39 +413,44 @@ scanListStart (Just (Numbered w _)) = do
         Numbered w' _ | w == w' -> return ()
         _                       -> fail "Change in list style"
 
+-- Parse a list marker and return the list type.
 parseListMarker :: Parser ListType
 parseListMarker = parseBullet <|> parseListNumber
 
+-- Parse a bullet and return list type.
 parseBullet :: Parser ListType
 parseBullet = do
   c <- satisfy isBulletChar
-  scanSpace <|> scanBlankline -- empty list item
-  nfb $ (count 2 $ scanSpaces >> char c) >>
+  scanSpace <|> scanBlankline -- allow empty list item
+  unless (c == '+')
+    $ nfb $ (count 2 $ scanSpaces >> skip (== c)) >>
           skipWhile (\x -> x == ' ' || x == c) >> endOfInput -- hrule
   return $ Bullet c
 
+-- Parse a list number marker and return list type.
 parseListNumber :: Parser ListType
 parseListNumber =
   (parseListNumberDig <|> parseListNumberPar) <*
      ((scanSpace <* scanSpaces) <|> scanBlankline)
   where parseListNumberDig = do
-           num <- decimal
-           wrap <-  PeriodFollowing <$ char '.'
-                <|> ParenFollowing <$ char ')'
+           num <- decimal  -- a string of decimal digits
+           wrap <-  PeriodFollowing <$ skip (== '.')
+                <|> ParenFollowing <$ skip (== ')')
            return $ Numbered wrap num
         parseListNumberPar = do
-           char '('
+           skip (== '(')
            num <- decimal
-           char ')'
+           skip (== ')')
            return $ Numbered ParensAround num
 
--- note: this requires reference labels to be on one line.
+-- Scan the beginning of a reference block: a bracketed label
+-- followed by a colon.  We assume that the label is on one line.
 scanReference :: Scanner
 scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
   (scanSpace <|> endOfLine)
 
----
-
+-- BlockParser:  parse the input line by line to discern block-level
+-- structure.
 
 data BlockParserState = BlockParserState{
           inputLines    :: [Text]
@@ -442,11 +525,6 @@ parseBlocks t = (bs, references s)
                                     , lineScanners = []
                                     , blockScanners = []
                                     }
-
-isEmptyLine :: Text -> Bool
-isEmptyLine = T.all isSpChar
-  where isSpChar ' '  = True
-        isSpChar _    = False
 
 blocksParser :: Maybe Text -> BlockParser Blocks
 blocksParser mbln =
@@ -633,9 +711,6 @@ joinLines = T.intercalate "\n"
 pEscapedChar :: Parser Char
 pEscapedChar = char '\\' *> satisfy isEscapable
 
-isEscapable :: Char -> Bool
-isEscapable c = isSymbol c || isPunctuation c
-
 -- parses a character satisfying the predicate, but understands escaped
 -- symbols
 pSatisfy :: (Char -> Bool) -> Parser Char
@@ -772,7 +847,7 @@ pUnbalancedBlockTag = do
 parseInlines :: ReferenceMap -> Text -> Inlines
 parseInlines refmap t =
   case parseOnly (msum <$> many (pInline refmap) <* endOfInput) t of
-       Left e   -> singleton $ Err (T.strip t) (T.pack $ show e)
+       Left e   -> error ("parseInlines: " ++ show e) -- should not happen
        Right r  -> r
 
 pInline :: ReferenceMap -> Parser Inlines
@@ -799,23 +874,6 @@ pSpace = do
                    else SoftBreak
               else Space
 
-isWordChar :: Char -> Bool
-isWordChar c
-  | c >= 'a' && c <= 'z' = True
-  | c >= 'A' && c <= 'Z' = True
-  | c >= '0' && c <= '9' = True
-isWordChar ',' = True
-isWordChar '.' = True
-isWordChar '-' = True
-isWordChar ':' = True
-isWordChar ';' = True
-isWordChar '(' = True
-isWordChar ')' = True
-isWordChar ' ' = False
-isWordChar '\n' = False
-isWordChar '_' = False
-isWordChar c = isAlphaNum c
-
 pStr :: Parser Inlines
 pStr = do
   let strChunk = takeWhile1 isWordChar
@@ -824,6 +882,22 @@ pStr = do
   if s `Set.member` uriProtocolsSet
      then pUri s <|> return (singleton $ Str s)
      else return (singleton $ Str s)
+ where isWordChar :: Char -> Bool
+       isWordChar c
+         | c >= 'a' && c <= 'z' = True
+         | c >= 'A' && c <= 'Z' = True
+         | c >= '0' && c <= '9' = True
+       isWordChar ',' = True
+       isWordChar '.' = True
+       isWordChar '-' = True
+       isWordChar ':' = True
+       isWordChar ';' = True
+       isWordChar '(' = True
+       isWordChar ')' = True
+       isWordChar ' ' = False
+       isWordChar '\n' = False
+       isWordChar '_' = False
+       isWordChar c = isAlphaNum c
 
 pSym :: Parser Inlines
 pSym = singleton . Str . T.singleton <$> (pEscapedChar <|> pNonspaceChar)
@@ -1081,8 +1155,5 @@ renderInlines = foldMap renderInline
         renderInline (Entity t) = H.preEscapedToMarkup t
         renderInline (RawHtml t) = H.preEscapedToMarkup t
         renderInline (Markdown t) = toHtml t -- shouldn't happen
-        renderInline (Err t e) = H.span ! A.class_ "error"
-                                        ! A.title (toValue e)
-                                        $ toHtml t
 
 
