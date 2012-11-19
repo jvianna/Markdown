@@ -8,7 +8,7 @@ test:
 
 prof: bin/markdown-prof
 
-bin/markdown-prof:
+bin/markdown-prof: bin/markdown.hs Markdown.hs
 	ghc --make -auto-all -prof -o $@ bin/markdown.hs
 
 clean:
