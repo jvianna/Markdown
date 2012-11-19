@@ -211,10 +211,10 @@ scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
 scanHRuleLine :: Scanner
-scanHRuleLine = try $ do
+scanHRuleLine = do
   scanNonindentSpaces
   c <- satisfy (\c -> c == '*' || c == '-' || c == '_')
-  count 2 $ try $ scanSpaces >> char c
+  count 2 $ scanSpaces >> char c
   skipWhile (\x -> x == ' ' || x == c)
   endOfInput
 
@@ -227,7 +227,7 @@ scanCodeFenceLine :: Scanner
 scanCodeFenceLine = () <$ codeFenceParserLine
 
 codeFenceParserLine :: Parser (Text, Text)
-codeFenceParserLine = try $ do
+codeFenceParserLine = do
   c <- satisfy isCodeFenceChar
   count 2 (char c)
   extra <- takeWhile (== c)
@@ -250,12 +250,12 @@ isBulletChar _   = False
 
 scanListStart :: Maybe ListType -> Parser ()
 scanListStart Nothing = () <$ parseListMarker
-scanListStart (Just (Bullet   c)) = try $ do
+scanListStart (Just (Bullet   c)) = do
   marker <- parseBullet
   case marker of
         Bullet c' | c == c' -> return ()
         _                   -> fail "Change in list style"
-scanListStart (Just (Numbered w _)) = try $ do
+scanListStart (Just (Numbered w _)) = do
   marker <- parseListNumber
   case marker of
         Numbered w' _ | w == w' -> return ()
@@ -276,12 +276,12 @@ parseListNumber :: Parser ListType
 parseListNumber =
   (parseListNumberDig <|> parseListNumberPar) <*
      ((scanSpace <* scanSpaces) <|> scanBlankline)
-  where parseListNumberDig = try $ do
+  where parseListNumberDig = do
            num <- decimal
            wrap <-  PeriodFollowing <$ char '.'
                 <|> ParenFollowing <$ char ')'
            return $ Numbered wrap num
-        parseListNumberPar = try $ do
+        parseListNumberPar = do
            char '('
            num <- decimal
            char ')'
@@ -462,7 +462,7 @@ pReference = do
   scanSpnl
   url <- pLinkUrl
   scanSpnl
-  tit <- option T.empty $ try $ scanSpnl >> pLinkTitle
+  tit <- option T.empty $ scanSpnl >> pLinkTitle
   scanSpaces
   endOfInput
   return (lab, url, tit)
@@ -479,7 +479,7 @@ listParser first first' = do
              Right r  -> return r
   let scanContentsIndent = () <$ count
          (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
-  let starter = try $ string initialSpaces *> scanListStart (Just listType)
+  let starter = string initialSpaces *> scanListStart (Just listType)
   let blockScanner = scanContentsIndent <|> scanBlankline
   let lineScanner = opt (scanContentsIndent) >>
                     nfb (scanSpaces >> scanListStart Nothing)
@@ -557,7 +557,7 @@ joinLines :: [Text] -> Text
 joinLines = T.intercalate "\n"
 
 pEscapedChar :: Parser Char
-pEscapedChar = try $ char '\\' *> satisfy isEscapable
+pEscapedChar = char '\\' *> satisfy isEscapable
 
 isEscapable :: Char -> Bool
 isEscapable c = isSymbol c || isPunctuation c
@@ -567,7 +567,7 @@ isEscapable c = isSymbol c || isPunctuation c
 pSatisfy :: (Char -> Bool) -> Parser Char
 pSatisfy p =
   satisfy (\c -> c /= '\\' && p c)
-   <|> try (char '\\' *> satisfy (\c -> isEscapable c && p c))
+   <|> (char '\\' *> satisfy (\c -> isEscapable c && p c))
 
 pAnyChar :: Parser Char
 pAnyChar = pSatisfy (const True)
@@ -579,7 +579,7 @@ data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
 -- returns name of tag needed to close, and whole tag
 pHtmlTag :: Parser (HtmlTagType, Text)
-pHtmlTag = try $ do
+pHtmlTag = do
   char '<'
   -- do not end the tag with a > character in a quoted attribute.
   closing <- (char '/' >> return True) <|> return False
@@ -592,7 +592,7 @@ pHtmlTag = try $ do
                 v <- pQuoted '"' <|> pQuoted '\'' <|> takeWhile1 isAlphaNum
                       <|> return ""
                 return $ ss <> T.singleton x <> xs <> "=" <> v
-  attrs <- T.concat <$> many (try attr)
+  attrs <- T.concat <$> many attr
   final <- takeWhile (\c -> isSpace c || c == '/')
   char '>'
   let tagtype = if closing
@@ -604,20 +604,20 @@ pHtmlTag = try $ do
           T.pack ('<' : ['/' | closing]) <> tagname <> attrs <> final <> ">")
 
 pHtmlComment :: Parser Text
-pHtmlComment = try $ do
+pHtmlComment = do
   string "<!--"
-  rest <- manyTill anyChar (try $ string "-->")
+  rest <- manyTill anyChar (string "-->")
   return $ "<!--" <> T.pack rest <> "-->"
 
 pQuoted :: Char -> Parser Text
-pQuoted c = try $ do
+pQuoted c = do
   char c
   contents <- takeTill (== c)
   char c
   return (T.singleton c <> contents <> T.singleton c)
 
 pLinkLabel :: Parser Text
-pLinkLabel = try $ char '[' *> (T.concat <$>
+pLinkLabel = char '[' *> (T.concat <$>
   (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
   where regChunk = takeWhile1 (\c -> c /='`' && c /='[' && c /=']' && c /='\\')
         escaped  = T.singleton <$> pEscapedChar
@@ -626,7 +626,7 @@ pLinkLabel = try $ char '[' *> (T.concat <$>
         inBrackets t = "[" <> t <> "]"
 
 pLinkUrl :: Parser Text
-pLinkUrl = try $ do
+pLinkUrl = do
   inPointy <- (char '<' >> return True) <|> return False
   if inPointy
      then takeWhile (\c -> c /='\r' && c /='\n' && c /='>') <* char '>'
@@ -638,12 +638,12 @@ pLinkUrl = try $ do
           inParens x = "(" <> x <> ")"
 
 pLinkTitle :: Parser Text
-pLinkTitle = try $ do
+pLinkTitle = do
   c <- satisfy (\c -> c == '"' || c == '\'' || c == '(')
   nfb $ skip isWhitespace
   nfbChar ')'
   let ender = if c == '(' then ')' else c
-  let pEnder = try $ char ender <* nfb (skip isAlphaNum)
+  let pEnder = char ender <* nfb (skip isAlphaNum)
   let regChunk = takeWhile1 (/= ender)
   let nestedChunk = (\x -> T.singleton c <> x <> T.singleton ender)
                       <$> pLinkTitle
@@ -668,13 +668,13 @@ htmlBlockParser ln _ = do
        Right r -> return r
 
 pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
-pInBalancedTags mbtag = try $ do
+pInBalancedTags mbtag = do
   (tagtype, opener) <- maybe pHtmlTag return mbtag
   case tagtype of
        SelfClosing _ -> return opener
        Closing _     -> mzero
        Opening name  -> (opener <>) <$> getRest name
-  where getRest name = try $ do
+  where getRest name = do
           nontag <- takeWhile (/='<')
           (tagtype', x') <- pHtmlTag
           case tagtype' of
@@ -751,7 +751,7 @@ pStr = do
   let underscore = skip (=='_')
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
   if s `Set.member` uriProtocolsSet
-     then try (pUri s) <|> return (singleton $ Str s)
+     then pUri s <|> return (singleton $ Str s)
      else return (singleton $ Str s)
 
 pSym :: Parser Inlines
@@ -777,11 +777,11 @@ pUri protocol = do
   -- as a URL, while NOT picking up the closing paren in
   -- (http://wikipedia.org)
   -- So we include balanced parens in the URL.
-  let inParens = try $ do char '('
-                          res <- takeWhile isUriChar
-                          char ')'
-                          return $ "(" <> res <> ")"
-  let innerPunct = T.singleton <$> try (char '/'
+  let inParens = do char '('
+                    res <- takeWhile isUriChar
+                    char ')'
+                    return $ "(" <> res <> ")"
+  let innerPunct = T.singleton <$> (char '/'
         <|> (pSatisfy isPunctuation <* nfb space <* nfb endOfInput))
   let uriChunk = takeWhile1 isUriChar <|> inParens <|> innerPunct
   rest <- T.concat <$> many1 uriChunk
@@ -821,7 +821,7 @@ single constructor ils = if Seq.null ils
 pOne :: Char -> ReferenceMap -> Inlines -> Parser Inlines
 pOne c refmap prefix = do
   contents <- msum <$> many ( (nfbChar c >> pInline refmap)
-                             <|> (try $ string (T.pack [c,c]) >>
+                             <|> (string (T.pack [c,c]) >>
                                   nfbChar c >> pTwo c refmap prefix) )
   (char c >> return (single Emph $ prefix <> contents))
     <|> return (singleton (Str (T.singleton c)) <> (prefix <> contents))
@@ -849,9 +849,9 @@ pCode :: Parser Inlines
 pCode = fst <$> pCode'
 
 pCode' :: Parser (Inlines, Text)
-pCode' = try $ do
+pCode' = do
   ticks <- takeWhile1 (== '`')
-  let end = try $ string ticks >> nfb (char '`')
+  let end = string ticks >> nfb (char '`')
   let nonBacktickSpan = takeWhile1 (/= '`')
   let backtickSpan = takeWhile1 (== '`')
   contents <- T.concat <$> manyTill (nonBacktickSpan <|> backtickSpan) end
@@ -865,31 +865,31 @@ pLink refmap = do
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
 pInlineLink :: Inlines -> Parser Inlines
-pInlineLink lab = try $ do
+pInlineLink lab = do
   char '('
   scanSpaces
   url <- pLinkUrl
-  tit <- option "" $ try $ scanSpnl *> pLinkTitle <* scanSpaces
+  tit <- option "" $ scanSpnl *> pLinkTitle <* scanSpaces
   char ')'
   return $ singleton $ Link lab url tit
 
 pReferenceLink :: ReferenceMap -> Text -> Inlines -> Parser Inlines
-pReferenceLink refmap rawlab lab = try $ do
-  ref <- option rawlab $ try $ scanSpnl >> pLinkLabel
+pReferenceLink refmap rawlab lab = do
+  ref <- option rawlab $ scanSpnl >> pLinkLabel
   let ref' = if T.null ref then rawlab else ref
   case lookupLinkReference refmap ref' of
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
 
 pImage :: ReferenceMap -> Parser Inlines
-pImage refmap = try $ do
+pImage refmap = do
   char '!'
   let linkToImage (Link lab url tit) = Image lab url tit
       linkToImage x                  = x
   fmap linkToImage <$> pLink refmap
 
 pEntity :: Parser Inlines
-pEntity = try $ do
+pEntity = do
   char '&'
   res <- pCharEntity <|> pDecEntity <|> pHexEntity
   char ';'
@@ -899,13 +899,13 @@ pCharEntity :: Parser Text
 pCharEntity = takeWhile1 (\c -> isAscii c && isLetter c)
 
 pDecEntity :: Parser Text
-pDecEntity = try $ do
+pDecEntity = do
   char '#'
   res <- takeWhile1 isDigit
   return $ "#" <> res
 
 pHexEntity :: Parser Text
-pHexEntity = try $ do
+pHexEntity = do
   char '#'
   x <- char 'X' <|> char 'x'
   res <- takeWhile1 isHexDigit
@@ -915,7 +915,7 @@ pRawHtml :: Parser Inlines
 pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 
 pInPointyBrackets :: Parser Inlines
-pInPointyBrackets = try $ do
+pInPointyBrackets = do
   char '<'
   t <- takeWhile1 (/='>')
   char '>'
