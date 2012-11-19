@@ -127,7 +127,9 @@ type ReferenceMap = M.Map Text (Text, Text)
 -- link references are case sensitive and ignore line breaks
 normalizeReference :: Text -> Text
 normalizeReference = T.toUpper . T.concat . T.split isWhitespace
-  where isWhitespace c = c == ' ' || c == '\t' || c == '\r' || c == '\n'
+
+isWhitespace :: Char -> Bool
+isWhitespace c = c == ' ' || c == '\t' || c == '\r' || c == '\n'
 
 addLinkReference :: Text -> (Text, Text) -> BlockParser ()
 addLinkReference key (url,tit) = modify $ \st ->
@@ -705,12 +707,24 @@ pInline refmap =
        <|> pSym
 
 pSpace :: Parser Inlines
+pSpace = do
+  ss <- takeWhile1 isWhitespace
+  return $ singleton
+         $ if T.any (=='\n') ss
+              then if "  " `T.isPrefixOf` ss
+                   then LineBreak
+                   else SoftBreak
+              else Space
+
+{-
+pSpace :: Parser Inlines
 pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
   where pSpaceSpace = scanSpace >>
             (pSpaceNewline <|> pSpaceLB <|> return Space)
         pSpaceLB = scanSpace >> scanSpaces >>
                       ((pSpaceNewline >> return LineBreak) <|> return Space)
         pSpaceNewline = endOfLine >> scanSpaces >> return SoftBreak
+-}
 
 pStr :: Parser Inlines
 pStr = do
