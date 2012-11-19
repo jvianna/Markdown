@@ -216,7 +216,6 @@ scanHRuleLine = try $ do
   count 2 $ try $ scanSpaces >> char c
   skipWhile (\x -> x == ' ' || x == c)
   endOfInput
-  return ()
 
 isCodeFenceChar :: Char -> Bool
 isCodeFenceChar '`' = True
@@ -267,8 +266,9 @@ parseListMarker = parseBullet <|> parseListNumber
 parseBullet :: Parser ListType
 parseBullet = do
   c <- satisfy isBulletChar
-  scanSpace <|> scanBlankline
-  nfb $ count 2 $ try $ scanSpaces >> char c -- hrule
+  scanSpace <|> scanBlankline -- empty list item
+  nfb $ (count 2 $ scanSpaces >> char c) >>
+          skipWhile (\x -> x == ' ' || x == c) >> endOfInput -- hrule
   return $ Bullet c
 
 parseListNumber :: Parser ListType
@@ -628,9 +628,10 @@ pLinkUrl :: Parser Text
 pLinkUrl = try $ do
   inPointy <- (char '<' >> return True) <|> return False
   if inPointy
-     then takeWhile (notInClass "\r\n>") <* char '>'
+     then takeWhile (\c -> c /='\r' && c /='\n' && c /='>') <* char '>'
      else T.concat <$> many (regChunk <|> parenChunk)
-    where regChunk = takeWhile1 (notInClass " \r\n()")
+    where regChunk = takeWhile1
+                 (\c -> not (isWhitespace c) && c /='(' && c /=')')
           parenChunk = inParens . T.concat <$> (char '(' *>
                          manyTill (regChunk <|> parenChunk) (char ')'))
           inParens x = "(" <> x <> ")"
