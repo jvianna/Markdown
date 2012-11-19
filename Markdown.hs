@@ -4,7 +4,6 @@
 
 TODO
 
-* factor out getLines
 * optimizations
 * comment the code, explaining parsing procedure in English and noting
   any controversial decisions
@@ -335,6 +334,13 @@ nextLine scanType = do
                          return $ Just x'
                       Nothing -> return Nothing
 
+getLines :: BlockParser [Text]
+getLines = nextLine LineScan >>= maybe (return []) (\l -> (l:) <$> getLines)
+
+getLinesTill :: (Text -> Bool) -> BlockParser [Text]
+getLinesTill f = nextLine LineScan >>=
+  maybe (return []) (\l -> if f l then return [] else (l:) <$> getLines)
+
 tabFilter :: Int -> Text -> Text
 tabFilter tabstop = T.concat . pad . T.split (== '\t')
   where pad []  = []
@@ -403,8 +409,6 @@ indentedCodeBlockParser _ ln = do
   lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
- where getLines = nextLine LineScan >>=
-                    maybe (return []) (\l -> (l:) <$> getLines)
 
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
 atxHeaderParser ln _ = do
@@ -423,14 +427,7 @@ codeFenceParser ln _ = do
        Left _  -> return $ singleton $ Para $ singleton $ Str ln
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
-          . T.unlines . reverse <$> getLines fence
-   where getLines fence = do
-           mbln <- nextLine LineScan
-           case mbln of
-                Nothing -> return []
-                Just l
-                  | fence `T.isPrefixOf` l -> return []
-                  | otherwise -> (l:) <$> getLines fence
+          . T.unlines . reverse <$> getLinesTill (fence `T.isPrefixOf`)
 
 parseCodeAttributes :: Text -> CodeAttr
 parseCodeAttributes t = CodeAttr { codeLang = lang }
@@ -440,11 +437,6 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
 
 referenceParser :: Text -> Text -> BlockParser Blocks
 referenceParser first _ = do
-  let getLines = do
-             mbln <- nextLine LineScan
-             case mbln of
-                  Nothing  -> return []
-                  Just ln  -> (ln:) <$> getLines
   rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
   let raw = joinLines (first:rest)
   case parseOnly pReference raw of
@@ -511,9 +503,7 @@ listItemsParser isTight starter blockScanner lineScanner = do
 parseLines :: Text -> Text -> BlockParser Blocks
 parseLines _ firstLine = do
   processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
- where getLines = nextLine LineScan >>=
-                    maybe (return []) (\x -> (x:) <$> getLines)
-       paraLine =   nfb scanBlankline
+ where paraLine =   nfb scanBlankline
                  >> nfb scanIndentSpace
                  >> nfb scanBlockquoteStart
                  >> nfb scanAtxHeaderStart
@@ -662,8 +652,6 @@ htmlBlockParser ln _ = do
        $ joinLines (ln:lns) of
        Left _  -> return $ processLines (ln:lns)
        Right r -> return r
- where getLines = nextLine LineScan >>=
-                    maybe (return []) (\l -> (l:) <$> getLines)
 
 pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
 pInBalancedTags mbtag = try $ do
