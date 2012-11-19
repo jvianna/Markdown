@@ -9,8 +9,15 @@ blank line.  And it is more flexible about the indentation of sublists.
 
 Several markdown extensions are implemented, including fenced code blocks and
 significant list start numbers.  All URLs are made into hyperlinks.
+See comments in the code for more details.
 
-It will be open sourced in due time.
+To compile, get the Haskell Platform, then install dependencies:
+
+    cabal update && cabal install blaze-html attoparsec
+
+Then 'make'.  'make test' will run some tests.
+
+The library will be open sourced in due time.
 
 Copyright &copy; 2012 John MacFarlane.
 
