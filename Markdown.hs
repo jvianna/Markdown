@@ -724,6 +724,7 @@ isWordChar c
   | c >= '0' && c <= '9' = True
 isWordChar ',' = True
 isWordChar '.' = True
+isWordChar '-' = True
 isWordChar ':' = True
 isWordChar ';' = True
 isWordChar '(' = True
