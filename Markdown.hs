@@ -197,6 +197,9 @@ nfb s = do
      then mzero
      else return ()
 
+nfbChar :: Char -> Scanner
+nfbChar c = nfb (skip (==c))
+
 parseAtxHeaderStart :: Parser Int
 parseAtxHeaderStart = do
   hashes <- takeWhile1 (=='#')
@@ -664,7 +667,7 @@ pInBalancedTags mbtag = try $ do
        Closing _     -> mzero
        Opening name  -> (opener <>) <$> getRest name
   where getRest name = try $ do
-          nontag <- T.pack <$> many (notChar '<')
+          nontag <- takeWhile (/='<')
           (tagtype', x') <- pHtmlTag
           case tagtype' of
                Closing n | n == name -> do
@@ -806,9 +809,9 @@ single constructor ils = if Seq.null ils
 -- if you never hit a c, emit '*' + inlines parsed.
 pOne :: Char -> ReferenceMap -> Inlines -> Parser Inlines
 pOne c refmap prefix = do
-  contents <- msum <$> many ( (nfb (char c) >> pInline refmap)
+  contents <- msum <$> many ( (nfbChar c >> pInline refmap)
                              <|> (try $ string (T.pack [c,c]) >>
-                                  nfb (char c) >> pTwo c refmap prefix) )
+                                  nfbChar c >> pTwo c refmap prefix) )
   (char c >> return (single Emph $ prefix <> contents))
     <|> return (singleton (Str (T.singleton c)) <> (prefix <> contents))
 
@@ -826,7 +829,7 @@ pTwo c refmap prefix = do
 -- if two c's, emit Strong and then parse pOne.
 pThree :: Char -> ReferenceMap -> Parser Inlines
 pThree c refmap = do
-  contents <- msum <$> (many (nfb (char c) >> pInline refmap))
+  contents <- msum <$> (many (nfbChar c >> pInline refmap))
   (string (T.pack [c,c]) >> (pOne c refmap (single Strong contents)))
    <|> (char c >> (pTwo c refmap (single Emph contents)))
    <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
