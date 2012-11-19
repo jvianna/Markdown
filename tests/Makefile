@@ -28,7 +28,7 @@ else
 endif
 
 %.diff: %.expected.html %.actual.html
-	diff -u $+ > $@ ; \
+	diff --unified=1 $+ > $@ ; \
 	  if [ -s $@ ]; then \
 	  	echo "\x1b[1;31m✘ $(patsubst %.diff,%,$@)\x1b[0m"; \
 		echo "\x1b[0;36m" ; cat $@; echo "\x1b[0m"; \
