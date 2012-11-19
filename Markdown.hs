@@ -720,19 +720,25 @@ pSpace = do
                    else SoftBreak
               else Space
 
-{-
-pSpace :: Parser Inlines
-pSpace = singleton <$> (pSpaceSpace <|> pSpaceNewline)
-  where pSpaceSpace = scanSpace >>
-            (pSpaceNewline <|> pSpaceLB <|> return Space)
-        pSpaceLB = scanSpace >> scanSpaces >>
-                      ((pSpaceNewline >> return LineBreak) <|> return Space)
-        pSpaceNewline = endOfLine >> scanSpaces >> return SoftBreak
--}
+isWordChar :: Char -> Bool
+isWordChar c
+  | c >= 'a' && c <= 'z' = True
+  | c >= 'A' && c <= 'Z' = True
+  | c >= '0' && c <= '9' = True
+isWordChar ',' = True
+isWordChar '.' = True
+isWordChar ':' = True
+isWordChar ';' = True
+isWordChar '(' = True
+isWordChar ')' = True
+isWordChar ' ' = False
+isWordChar '\n' = False
+isWordChar '_' = False
+isWordChar c = isAlphaNum c
 
 pStr :: Parser Inlines
 pStr = do
-  let strChunk = takeWhile1 isAlphaNum
+  let strChunk = takeWhile1 isWordChar
   let underscore = string "_"
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
   if s `elem` uriProtocols
