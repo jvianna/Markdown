@@ -4,6 +4,7 @@
 
 TODO
 
+* factor out getLines
 * optimizations
 * comment
 
@@ -33,6 +34,10 @@ QUESTIONS
 * store entities as chars or entities?
    CURRENTLY AS ENTITIES
 * should we retain user line breaks?
+* to avoid getting bogged down in lookaheads for html
+  blocks, we disallow blank lines in html blocks.
+  not sure if original markdown did that, but it seems a fair
+  compromise.
 
 -}
 
@@ -62,7 +67,7 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
--- import Debug.Trace
+import Debug.Trace
 -- tr s = trace s (return ())
 
 
@@ -650,17 +655,14 @@ blockHtmlTags = Set.fromList
    "h1", "h2", "h3", "h4", "h5", "h6", "video"]
 
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
-htmlBlockParser ln _ = go (parse pHtmlBlock ln)
-  where go x = case x of
-                    Fail unparsed _ _ -> return $ processLines
-                                                $ T.lines unparsed
-                    Partial f         -> nextLine BlockScan >>=
-                                             go . f .  maybe "" ("\n" <>)
-                    Done unparsed r   -> return $ r <>
-                                         if T.null unparsed
-                                            then empty
-                                            else processLines
-                                                 (T.lines $ T.strip unparsed)
+htmlBlockParser ln _ = do
+  lns <- withLineScanner (nfb scanBlankline) getLines
+  case parseOnly (pHtmlBlock <* scanBlankline <* endOfInput)
+       $ joinLines (ln:lns) of
+       Left _  -> return $ processLines (ln:lns)
+       Right r -> return r
+ where getLines = nextLine LineScan >>=
+                    maybe (return []) (\l -> (l:) <$> getLines)
 
 pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
 pInBalancedTags mbtag = try $ do
