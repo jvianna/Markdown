@@ -86,7 +86,11 @@
 --
 -- * All symbols and punctuation marks can be backslash-escaped,
 --   not just those with a use in Markdown.
-
+--
+-- * A blank line is not required before a list.  Note that this
+--   does open risk of unexpected results, when a line begins with
+--   something like '88.'
+--
 -- It resolves the following issues left vague in the markdown syntaxx
 -- document:
 --
@@ -106,6 +110,21 @@
 --   as indented code).
 --
 -- * ATX headers must have a space after the initial `###`s.
+--
+-- * Blank lines are not required before horizontal rules, blockquotes,
+--   lists, code blocks, or headers.  They are not required after, either,
+--   though in many cases "laziness" will effectively require a blank
+--   line after.  For example, in
+--
+--      Hello there.
+--      > A quote.
+--      Still a quote.
+--
+--   the "Still a quote." is part of the block quote, because of laziness
+--   (the ability to leave off the > from the beginning of subsequent
+--   lines).  Laziness also affects lists. However, we can have a code
+--   block, header, or horizontal rule between two paragraphs without any
+--   blank lines.
 --
 -- QUESTIONS
 --
@@ -204,6 +223,11 @@ listMarkerWidth (Numbered wrap n) =
          | otherwise -> 5  -- nobody counts this high, right?
 
 -- Utility functions.
+
+-- Like T.unlines but does not add a final newline.
+-- Concatenates lines with newlines between.
+joinLines :: [Text] -> Text
+joinLines = T.intercalate "\n"
 
 -- Convert tabs to spaces using a 4-space tab stop.
 tabFilter :: Text -> Text
@@ -660,12 +684,18 @@ codeFenceParser ln _ = do
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLinesTill (fence `T.isPrefixOf`)
 
+-- Parse whatever remains on a fenced code block line after the fence.
+-- The first word is the language, the rest is currently ignored,
+-- but could at some point be returned or even parsed into a structure.
 parseCodeAttributes :: Text -> CodeAttr
 parseCodeAttributes t = CodeAttr { codeLang = lang }
   where lang = case T.words (T.strip t) of
                      []    -> Nothing
                      (l:_) -> Just l
 
+-- Parse a link reference.  If parsing fails (rare), return a plain
+-- paragraph with the first line; otherwise, return an empty sequence
+-- and update the reference map in state.
 referenceParser :: Text -> Text -> BlockParser Blocks
 referenceParser first _ = do
   rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
@@ -675,6 +705,9 @@ referenceParser first _ = do
                                        $ singleton $ Markdown raw
        Right (lab, url, tit) -> empty <$ addLinkReference lab (url,tit)
 
+-- A link reference is a square-bracketed link label, a colon,
+-- optional space or newline, a URL, optional space or newline,
+-- and an optional link title.
 pReference :: Parser (Text, Text, Text)
 pReference = do
   scanNonindentSpaces
@@ -687,6 +720,40 @@ pReference = do
   scanSpaces
   endOfInput
   return (lab, url, tit)
+
+pLinkLabel :: Parser Text
+pLinkLabel = char '[' *> (T.concat <$>
+  (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
+  where regChunk = takeWhile1 (\c -> c /='`' && c /='[' && c /=']' && c /='\\')
+        escaped  = T.singleton <$> pEscapedChar
+        codeChunk = snd <$> pCode'
+        bracketed = inBrackets <$> pLinkLabel
+        inBrackets t = "[" <> t <> "]"
+
+pLinkUrl :: Parser Text
+pLinkUrl = do
+  inPointy <- (char '<' >> return True) <|> return False
+  if inPointy
+     then takeWhile (\c -> c /='\r' && c /='\n' && c /='>') <* char '>'
+     else T.concat <$> many (regChunk <|> parenChunk)
+    where regChunk = takeWhile1
+                 (\c -> not (isWhitespace c) && c /='(' && c /=')')
+          parenChunk = inParens . T.concat <$> (char '(' *>
+                         manyTill (regChunk <|> parenChunk) (char ')'))
+          inParens x = "(" <> x <> ")"
+
+pLinkTitle :: Parser Text
+pLinkTitle = do
+  c <- satisfy (\c -> c == '"' || c == '\'' || c == '(')
+  nfb $ skip isWhitespace
+  nfbChar ')'
+  let ender = if c == '(' then ')' else c
+  let pEnder = char ender <* nfb (skip isAlphaNum)
+  let regChunk = takeWhile1 (/= ender)
+  let nestedChunk = (\x -> T.singleton c <> x <> T.singleton ender)
+                      <$> pLinkTitle
+  T.concat <$> manyTill (regChunk <|> nestedChunk) pEnder
+
 
 listParser :: Text -> Text -> BlockParser Blocks
 listParser first first' = do
@@ -774,9 +841,6 @@ processLines ws =
 
 -- Utility parsers.
 
-joinLines :: [Text] -> Text
-joinLines = T.intercalate "\n"
-
 pEscapedChar :: Parser Char
 pEscapedChar = char '\\' *> satisfy isEscapable
 
@@ -830,39 +894,6 @@ pQuoted c = do
   contents <- takeTill (== c)
   char c
   return (T.singleton c <> contents <> T.singleton c)
-
-pLinkLabel :: Parser Text
-pLinkLabel = char '[' *> (T.concat <$>
-  (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
-  where regChunk = takeWhile1 (\c -> c /='`' && c /='[' && c /=']' && c /='\\')
-        escaped  = T.singleton <$> pEscapedChar
-        codeChunk = snd <$> pCode'
-        bracketed = inBrackets <$> pLinkLabel
-        inBrackets t = "[" <> t <> "]"
-
-pLinkUrl :: Parser Text
-pLinkUrl = do
-  inPointy <- (char '<' >> return True) <|> return False
-  if inPointy
-     then takeWhile (\c -> c /='\r' && c /='\n' && c /='>') <* char '>'
-     else T.concat <$> many (regChunk <|> parenChunk)
-    where regChunk = takeWhile1
-                 (\c -> not (isWhitespace c) && c /='(' && c /=')')
-          parenChunk = inParens . T.concat <$> (char '(' *>
-                         manyTill (regChunk <|> parenChunk) (char ')'))
-          inParens x = "(" <> x <> ")"
-
-pLinkTitle :: Parser Text
-pLinkTitle = do
-  c <- satisfy (\c -> c == '"' || c == '\'' || c == '(')
-  nfb $ skip isWhitespace
-  nfbChar ')'
-  let ender = if c == '(' then ')' else c
-  let pEnder = char ender <* nfb (skip isAlphaNum)
-  let regChunk = takeWhile1 (/= ender)
-  let nestedChunk = (\x -> T.singleton c <> x <> T.singleton ender)
-                      <$> pLinkTitle
-  T.concat <$> manyTill (regChunk <|> nestedChunk) pEnder
 
 blockHtmlTags :: Set.Set Text
 blockHtmlTags = Set.fromList
@@ -1150,12 +1181,17 @@ emailLink :: Text -> Inlines
 emailLink t = singleton $ Link (singleton $ Str t)
                                (escapeUri $ "mailto:" <> t) (T.empty)
 
--- blocks
 
+-- Parse text into a sequence of blocks.  There is no "failure"
+-- return status, because any input text should be considered a
+-- valid markdown document, and any error indicates a programming
+-- problem.
 parseMarkdown :: Text -> Blocks
 parseMarkdown t = processBlocks refmap bls
   where (bls, refmap) = parseBlocks (t <> "\n")
 
+-- Process a sequence of blocks, parsing Markdown elements into
+-- Inlines and resolving link references.
 processBlocks :: ReferenceMap -> Blocks -> Blocks
 processBlocks refmap = fmap processBl
   where processInlines = foldMap processInline
@@ -1169,8 +1205,13 @@ processBlocks refmap = fmap processBl
             Blockquote bls -> Blockquote $ processBlocks refmap bls
             List tight listType items ->
                List tight listType $ map (processBlocks refmap) items
-            x -> x
+            x -> x  -- other block elements are terminal nodes
 
+-- Render a sequence of blocks as HTML5.  Currently a single
+-- newline is used between blocks, an a newline is used as a
+-- separator e.g. for list items. These can be changed by adjusting
+-- nl and blocksep.  Eventually we probably want these as parameters
+-- or options.
 renderBlocks :: Blocks -> Html
 renderBlocks = mconcat . intersperse blocksep . map renderBlock . toList
   where renderBlock :: Block -> Html
@@ -1192,23 +1233,28 @@ renderBlocks = mconcat . intersperse blocksep . map renderBlock . toList
           if n == 1 then base else base ! A.start (toValue n)
           where base = H.ol $ nl <> mapM_ (li tight) items
         renderBlock (HtmlBlock raw) = H.preEscapedToMarkup raw
-        li :: Bool -> Blocks -> Html
+        li :: Bool -> Blocks -> Html  -- tight list handling
         li True bs = case toList bs of
                           [Para zs]         -> H.li (renderInlines zs) <> nl
                           [Para zs, List{}] -> H.li (renderInlines zs <>
                              nl <> renderBlocks (Seq.drop 1 bs)) <> nl
                           _                 -> toLi bs
+                          -- An item in a tight list with multiple paragraphs
+                          -- will be rendered as in a loose list.
         li False bs = toLi bs
         toLi x = (H.li $ renderBlocks x) <> nl
         nl = "\n"
         blocksep = "\n"
 
+-- Render a sequence of inlines as HTML5.
 renderInlines :: Inlines -> Html
 renderInlines = foldMap renderInline
   where renderInline :: Inline -> Html
         renderInline (Str t) = toHtml t
         renderInline Space   = " "
-        renderInline SoftBreak = "\n" -- or space optionally
+        renderInline SoftBreak = "\n" -- this preserves the line breaks in the
+                                      -- markdown document; replace with " " if this
+                                      -- isn't wanted.
         renderInline LineBreak = H.br <> "\n"
         renderInline (Emph ils) = H.em $ renderInlines ils
         renderInline (Strong ils) = H.strong $ renderInlines ils
@@ -1224,5 +1270,3 @@ renderInlines = foldMap renderInline
         renderInline (Entity t) = H.preEscapedToMarkup t
         renderInline (RawHtml t) = H.preEscapedToMarkup t
         renderInline (Markdown t) = toHtml t -- shouldn't happen
-
-
