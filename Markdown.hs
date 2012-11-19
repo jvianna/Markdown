@@ -4,19 +4,22 @@
 
 TODO
 
-* optimizations
 * comment the code, explaining parsing procedure in English and noting
   any controversial decisions
 
 QUESTIONS
 
 * nested quotes in link title?  seems silly, but some impls do?
+  YES
 * limit html blocks to list of html block tags?
+  YES
 * how exactly do html blocks work?
+  to avoid getting bogged down in lookaheads for html
+  blocks, we disallow blank lines in html blocks.
+  not sure if original markdown did that, but it seems a fair
+  compromise.
+* allow html block comments to include blanklines?
 * markdown=1 attribute?
-* allow blank lines not to separate two code blocks?
-   Markdown.pl fuses them. is this desirable?
-   CURRENTLY THEY ARE TREATED AS SEPARATE.
 * do we want the linebreak at end of code block?
   YES. TENTATIVELY. FOR CONFORMITY.
 * in numbered lists, do we store list style?
@@ -34,10 +37,8 @@ QUESTIONS
 * store entities as chars or entities?
    CURRENTLY AS ENTITIES
 * should we retain user line breaks?
-* to avoid getting bogged down in lookaheads for html
-  blocks, we disallow blank lines in html blocks.
-  not sure if original markdown did that, but it seems a fair
-  compromise.
+  YES so far...
+* things like: [link *with emph]*](/url) ?
 
 -}
 
