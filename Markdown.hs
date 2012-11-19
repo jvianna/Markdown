@@ -9,7 +9,10 @@
 -- There is no such thing as an invalid Markdown document. Any
 -- string of characters is valid Markdown.  So the processor should
 -- finish efficiently no matter what input it gets. Garbage in
--- should not cause an error or exponential slowdowns.
+-- should not cause an error or exponential slowdowns.  (All the
+-- "error" statements in the code below are things that "should not
+-- happen" on any input and indicate programming errors if they
+-- are triggered.)
 --
 -- This processor adds the following Markdown extensions:
 --
@@ -202,6 +205,15 @@ listMarkerWidth (Numbered wrap n) =
 
 -- Utility functions.
 
+-- Convert tabs to spaces using a 4-space tab stop.
+tabFilter :: Text -> Text
+tabFilter = T.concat . pad . T.split (== '\t')
+  where pad []  = []
+        pad [t] = [t]
+        pad (t:ts) = let tl = T.length t
+                         n  = tl + 4 - (tl `mod` 4)
+                         in  T.justifyLeft n ' ' t : pad ts
+
 -- These are the whitespace characters that are significant in
 -- parsing markdown. We can treat \160 (nonbreaking space) etc.
 -- as regular characters.  This function should be considerably
@@ -259,11 +271,15 @@ type ReferenceMap = M.Map Text (Text, Text)
 normalizeReference :: Text -> Text
 normalizeReference = T.toUpper . T.concat . T.split isWhitespace
 
-addLinkReference :: Text -> (Text, Text) -> BlockParser ()
+addLinkReference :: Text           -- reference label
+                 -> (Text, Text)   -- (url, title)
+                 -> BlockParser ()
 addLinkReference key (url,tit) = modify $ \st ->
   st{ references = M.insert (normalizeReference key) (url,tit) (references st) }
 
-lookupLinkReference :: ReferenceMap -> Text -> Maybe (Text, Text)
+lookupLinkReference :: ReferenceMap
+                    -> Text                -- reference label
+                    -> Maybe (Text, Text)  -- (url, title)
 lookupLinkReference refmap key = M.lookup (normalizeReference key) refmap
 
 -- Scanners.
@@ -451,16 +467,43 @@ scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
 
 -- BlockParser:  parse the input line by line to discern block-level
 -- structure.
-
-data BlockParserState = BlockParserState{
-          inputLines    :: [Text]
-        , lastLine      :: Maybe Text
-        , references    :: ReferenceMap
-        , lineScanners  :: [Scanner]
-        , blockScanners :: [Scanner]
-        }
+--
+-- The parser maintains a state that includes two stacks of scanners,
+-- the "line scanners" and the "block scanners".
+--
+-- We start by taking the next input line and applying the block scanners.
+-- We then scan the remaining text on the line to see what kind of
+-- block we're dealing with, and parse it line by line as required.  The
+-- line scanners are applied at the beginning of each line within a
+-- block.  When the line scanners can no longer be applied, we have
+-- finished the block and we try the block scanners again.  When the
+-- block scanners can no longer be applied, we are done parsing.
+--
+-- When we begin a new block, we may push new block or line scanners
+-- onto the stack.  For example, when we're parsing a blockquote, we
+-- push a line scanner that consumes an optional (nonident space +
+-- > character + optional space) at the beginning of each line within
+-- a block.  And we push a block scanner that consumes a mandatory
+-- (nonident space + > character + optional space) at the beginning
+-- of each block (e.g. paragraph or list) within the blockquote.
+-- These new scanners are popped off their respective stacks when
+-- we've finished parsing the container block.
+--
+-- This parsing method allows us to proceed line by line without
+-- backtracking.  At this level, we don't try to parse inlines within
+-- lines; we just return the raw markdown of the lines parsed, and
+-- hand this off to the inline parser after we've parsed all the
+-- blocks and the link references.
 
 type BlockParser = State BlockParserState
+
+data BlockParserState = BlockParserState{
+          inputLines    :: [Text]        -- lines to be parsed
+        , lastLine      :: Maybe Text    -- last line parsed
+        , references    :: ReferenceMap  -- reference map
+        , lineScanners  :: [Scanner]     -- list of line scanners
+        , blockScanners :: [Scanner]     -- list of block scanners
+        }
 
 -- Add a scanner to the line scanner stack and run a parser,
 -- then pop the scanner.
@@ -482,10 +525,14 @@ withBlockScanner scanner parser = do
   modify $ \st -> st{ blockScanners = scanners }
   return result
 
-data ScanType     = BlockScan | LineScan deriving Eq
+-- When we're getting a new line, we need to know whether to
+-- apply the block scanners or the line scanners.
+data ScanType = BlockScan | LineScan deriving Eq
 
--- Apply scanners to next line, and return result if they match.
--- Skip over empty lines if blockStart.
+-- Apply scanners to next line (block scanners if BlockScan,
+-- line scanners if LineScan), and return Just the rest of the line
+-- if they match, Nothing if there is no more input or they
+-- don't match.
 nextLine :: ScanType -> BlockParser (Maybe Text)
 nextLine scanType = do
   lns <- gets inputLines
@@ -501,23 +548,24 @@ nextLine scanType = do
                          return $ Just x'
                       Nothing -> return Nothing
 
+-- Parse lines (after applying the line scanners at the beginning of
+-- each) until the line scanners won't apply any more or we're out
+-- of input.
 getLines :: BlockParser [Text]
 getLines = nextLine LineScan >>= maybe (return []) (\l -> (l:) <$> getLines)
 
+-- Like getLines, but stops when a line matches a test.  (The tested
+-- line is consumed but not returned.)
 getLinesTill :: (Text -> Bool) -> BlockParser [Text]
 getLinesTill f = nextLine LineScan >>=
   maybe (return []) (\l -> if f l then return [] else (l:) <$> getLines)
 
-tabFilter :: Text -> Text
-tabFilter = T.concat . pad . T.split (== '\t')
-  where pad []  = []
-        pad [t] = [t]
-        pad (t:ts) = let tl = T.length t
-                         n  = tl + 4 - (tl `mod` 4)
-                         in  T.justifyLeft n ' ' t : pad ts
-
+-- Parse a Text line by line and return a sequence of Blocks and a reference
+-- map.
 parseBlocks :: Text -> (Blocks, ReferenceMap)
-parseBlocks t = (bs, references s)
+parseBlocks t = case inputLines s of
+                     []       -> (bs, references s)
+                     (next:_) -> error $ "Parsing stopped at the line: " ++ T.unpack next
   where (bs, s) = runState (blocksParser Nothing)
                     BlockParserState{ inputLines = map tabFilter $ T.lines t
                                     , lastLine = Nothing
@@ -526,6 +574,11 @@ parseBlocks t = (bs, references s)
                                     , blockScanners = []
                                     }
 
+-- If the parameter is Nothing, get the next line (applying block scanners),
+-- decide what kind of block we have, and call the appropriate block parser.
+-- If parameter is Just text, then we use text as our first line instead of
+-- getting a new line.  (This is used when we need to call blocksParser again
+-- from the subsidiary block parser.)
 blocksParser :: Maybe Text -> BlockParser Blocks
 blocksParser mbln =
   case mbln of
@@ -538,11 +591,15 @@ blocksParser mbln =
                   (x:_) | isEmptyLine x -> do
                       -- two blanklines ends block parsing in a container
                       bscs <- gets blockScanners
-                      if null bscs
-                         then blocksParser Nothing
+                      if null bscs  -- we're at outer level, not in container
+                         then blocksParser Nothing -- just skip the blank
                          else return empty
                   _ -> blocksParser Nothing
          | otherwise = do
+         -- TODO - this could be made a bit more efficient.  Once we pass
+         -- scanIndentSpace, we know we don't have indentSpace, so
+         -- scanNonidentSpaces could probably be replaced with scanSpaces in
+         -- things like scanReference.
           next <- tryScanners
                     [ (scanBlockquoteStart, blockquoteParser)
                     , (scanIndentSpace, indentedCodeBlockParser)
@@ -560,18 +617,27 @@ blocksParser mbln =
                                           Just ln' -> p ln ln'
                                           Nothing  -> tryScanners rest ln
 
+-- Specific block parsers.  These take two parameters. The first
+-- is the whole line, before applying the scanner for this type
+-- of parser; the second is what remains after that scanner is
+-- applied.  Some parsers use the first, others the second,
+-- by convenience.
+
+-- Parse a blockquote.
 blockquoteParser :: Text -> Text -> BlockParser Blocks
 blockquoteParser _ firstLine = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
     $ withBlockScanner scanBlockquoteStart
         $ blocksParser $ Just firstLine)
 
+-- Parse an indented code block.
 indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
 indentedCodeBlockParser _ ln = do
   lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
 
+-- Parse an ATX header.
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
 atxHeaderParser ln _ = do
   let ln' = T.strip $ T.dropAround (=='#') ln
@@ -579,14 +645,17 @@ atxHeaderParser ln _ = do
                        then ln' <> "#"  -- escaped final #
                        else ln'
   case parseOnly parseAtxHeaderStart ln of
-        Left _  -> return $ singleton $ Para $ singleton $ Str ln
-        Right lev -> return
+        Right lev
+          | lev >= 1 && lev <= 6 -> return
                      $ singleton . Header lev . singleton . Markdown $ inside
+        _  -> return $ singleton $ Para $ singleton $ Str ln
 
+-- Parse a fenced code block.  Note:  if the fence is never terminated,
+-- the entire rest of the document will be put into a fenced code block.
 codeFenceParser :: Text -> Text -> BlockParser Blocks
 codeFenceParser ln _ = do
   case parseOnly codeFenceParserLine ln of
-       Left _  -> return $ singleton $ Para $ singleton $ Str ln
+       Left _  -> error "Could not parse codeFenceParserLine" -- should not happen
        Right (fence, rawattr) ->
          singleton . CodeBlock (parseCodeAttributes rawattr)
           . T.unlines . reverse <$> getLinesTill (fence `T.isPrefixOf`)
