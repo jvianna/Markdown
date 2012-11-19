@@ -25,7 +25,15 @@
 --   with a line of backticks or tildes (the same character as started
 --   the code block) of at least the length of the starting line.
 --
+-- * A hard line break can be indicated with a backslash before a
+--   newline. The standard method of two spaces before a newline also
+--   works, but this gives a more "visible" alternative.
+--
 -- In departs from the markdown syntax document in the following ways:
+--
+-- * Underscores cannot be used for word-internal emphasis. This
+--   prevents common mistakes with filenames, usernames, and indentifiers.
+--   Asterisks can still be used if word in*ter*nal emphasis is needed.
 --
 -- * The starting number of an ordered list is now significant.
 --   Other numbers are ignored, so you can still use `1.` for each
@@ -880,10 +888,6 @@ pSatisfy p =
   satisfy (\c -> c /= '\\' && p c)
    <|> (char '\\' *> satisfy (\c -> isEscapable c && p c))
 
--- Parses a (possibly escaped) nonspace character.
-pNonspaceChar :: Parser Char
-pNonspaceChar = pSatisfy (not . isWhitespace)
-
 -- Simple representation of HTML tag.
 data HtmlTagType = Opening Text | Closing Text | SelfClosing Text deriving Show
 
@@ -946,9 +950,9 @@ blockHtmlTags = Set.fromList
 -- <div>, <table>, <pre>, <p>, etc. — must be separated from
 -- surrounding content by blank lines, and the start and end tags
 -- of the block should not be indented with tabs or spaces."
--- We don't enforce the requirement on end tags, which seems
--- unnecessary and is probably left over from when Markdown.pl
--- didn't have a way of handling balanced tags.
+-- We don't enforce the requirement that end tags be unindented,
+-- which seems unnecessary and is probably left over from when
+-- Markdown.pl didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
   lns <- withLineScanner (nfb scanBlankline) getLines
@@ -1030,15 +1034,20 @@ pSpace = do
                    else SoftBreak
               else Space
 
+-- Parse a string.  We include internal underscores,
+-- so they won't trigger emphasis.
 pStr :: Parser Inlines
 pStr = do
   let strChunk = takeWhile1 isWordChar
   let underscore = skip (=='_')
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
+  -- check to see if we might have a bare URL:
   if s `Set.member` uriProtocolsSet
      then pUri s <|> return (singleton $ Str s)
      else return (singleton $ Str s)
  where isWordChar :: Char -> Bool
+       -- This is a dispensable optimization over isAlphaNum, covering
+       -- common cases first.
        isWordChar c
          | c >= 'a' && c <= 'z' = True
          | c >= 'A' && c <= 'Z' = True
@@ -1055,16 +1064,28 @@ pStr = do
        isWordChar '_' = False
        isWordChar c = isAlphaNum c
 
+-- Catch all -- parse an escaped character, an escaped
+-- newline, or any remaining symbol character.
 pSym :: Parser Inlines
-pSym = singleton . Str . T.singleton <$> pNonspaceChar
+pSym = do
+  c <- anyChar
+  let ch = singleton . Str . T.singleton
+  if c == '\\'
+     then ch <$> satisfy isEscapable
+          <|> singleton LineBreak <$ satisfy (=='\n')
+          <|> return (ch '\\')
+     else return (ch c)
 
+-- These could be added to...
 uriProtocols :: [Text]
 uriProtocols =
   [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
 
+-- Make them a set for more efficient lookup.
 uriProtocolsSet :: Set.Set Text
 uriProtocolsSet = Set.fromList $ uriProtocols ++ map T.toUpper uriProtocols
 
+-- Parse a URI, using heuristics to avoid capturing final punctuation.
 pUri :: Text -> Parser Inlines
 pUri protocol = do
   char ':'
@@ -1093,9 +1114,12 @@ pUri protocol = do
                                   (T.pack $ show uri') (T.empty)
        Nothing   -> fail "not a URI"
 
+-- Escape a URI.
 escapeUri :: Text -> Text
 escapeUri = T.pack . escapeURIString (not . isSpace) . T.unpack
 
+-- Parses material enclosed in *s, **s, _s, or __s.
+-- Designed to avoid backtracking.
 pEnclosure :: Char -> ReferenceMap -> Parser Inlines
 pEnclosure c refmap = do
   cs <- takeWhile1 (== c)
@@ -1141,9 +1165,11 @@ pThree c refmap = do
    <|> (char c >> (pTwo c refmap (single Emph contents)))
    <|> return (singleton (Str $ T.pack [c,c,c]) <> contents)
 
+-- Inline code span.
 pCode :: Parser Inlines
 pCode = fst <$> pCode'
 
+-- this is factored out because it needed in pLinkLabel.
 pCode' :: Parser (Inlines, Text)
 pCode' = do
   ticks <- takeWhile1 (== '`')
@@ -1158,8 +1184,10 @@ pLink refmap = do
   lab <- pLinkLabel
   let lab' = parseInlines refmap lab
   pInlineLink lab' <|> pReferenceLink refmap lab lab'
+    -- fallback without backtracking if it's not a link:
     <|> return (singleton (Str "[") <> lab' <> singleton (Str "]"))
 
+-- An inline link: [label](/url "optional title")
 pInlineLink :: Inlines -> Parser Inlines
 pInlineLink lab = do
   char '('
@@ -1169,6 +1197,7 @@ pInlineLink lab = do
   char ')'
   return $ singleton $ Link lab url tit
 
+-- A reference link: [label], [foo][label], or [label][].
 pReferenceLink :: ReferenceMap -> Text -> Inlines -> Parser Inlines
 pReferenceLink refmap rawlab lab = do
   ref <- option rawlab $ scanSpnl >> pLinkLabel
@@ -1177,6 +1206,7 @@ pReferenceLink refmap rawlab lab = do
        Just (url,tit)  -> return $ singleton $ Link lab url tit
        Nothing         -> fail "Reference not found"
 
+-- An image:  ! followed by a link.
 pImage :: ReferenceMap -> Parser Inlines
 pImage refmap = do
   char '!'
@@ -1184,6 +1214,10 @@ pImage refmap = do
       linkToImage x                  = x
   fmap linkToImage <$> pLink refmap
 
+-- An entity.  We store these in a special inline element.
+-- This ensures that entities in the input come out as
+-- entities in the output. Alternatively we could simply
+-- convert them to characters and store them as Str inlines.
 pEntity :: Parser Inlines
 pEntity = do
   char '&'
@@ -1207,9 +1241,12 @@ pHexEntity = do
   res <- takeWhile1 isHexDigit
   return $ "#" <> T.singleton x <> res
 
+-- Raw HTML tag or comment.
 pRawHtml :: Parser Inlines
 pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 
+-- A link like this: <http://whatever.com> or <me@mydomain.edu>.
+-- Markdown.pl does email obfuscation; we don't bother with that here.
 pAutolink :: Parser Inlines
 pAutolink = do
   char '<'
@@ -1220,15 +1257,15 @@ pAutolink = do
          | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
          | otherwise   -> fail "Unknown contents of <>"
 
-scanMatches :: Scanner -> Text -> Bool
-scanMatches scanner t =
-  case parseOnly scanner t of
-       Right ()   -> True
-       _          -> False
 
+-- This may not be the most efficient method.
 startsWithProtocol :: Text -> Bool
 startsWithProtocol =
   scanMatches $ choice (map stringCI uriProtocols) >> skip (== ':')
+  where scanMatches scanner t =
+          case parseOnly scanner t of
+               Right ()   -> True
+               _          -> False
 
 autoLink :: Text -> Inlines
 autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
