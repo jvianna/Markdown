@@ -153,7 +153,7 @@ scanBlockquoteStart =
   scanNonindentSpaces >> scanChar '>' >> opt (scanChar ' ')
 
 scanIndentSpace :: Scanner
-scanIndentSpace = scanSpace >> scanSpace >> scanSpace >> scanSpace
+scanIndentSpace = () <$ count 4 (skip (==' '))
 
 scanNonindentSpaces :: Scanner
 scanNonindentSpaces =
@@ -170,7 +170,7 @@ scanBlankline :: Scanner
 scanBlankline = skipWhile (==' ') *> endOfInput
 
 scanSpace :: Scanner
-scanSpace = () <$ satisfy (==' ')
+scanSpace = skip (==' ')
 
 -- 0 or more spaces
 scanSpaces :: Scanner
