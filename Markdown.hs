@@ -133,17 +133,6 @@
 --   lines).  Laziness also affects lists. However, we can have a code
 --   block, header, or horizontal rule between two paragraphs without any
 --   blank lines.
---
--- QUESTIONS
---
--- * markdown=1 attribute?
--- * two blockquotes w blank line between
---    NO - but two blank lines separate blockquotes, just like lists
--- * store entities as chars or entities?
---    CURRENTLY AS ENTITIES
--- * should we retain user line breaks?
---   YES so far...
--- * things like: [link *with emph]*](/url) ?
 
 module Markdown (parseMarkdown, renderBlocks) where
 import Prelude hiding (takeWhile)
