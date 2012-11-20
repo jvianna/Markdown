@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Standard Markdown Dingus</title>
+  <title>Markdown Dingus</title>
   <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
   <link href="//netdna.bootstrapcdn.com/twitter-bootstrap/2.1.1/css/bootstrap-combined.min.css" rel="stylesheet">
   <script src="//netdna.bootstrapcdn.com/twitter-bootstrap/2.1.1/js/bootstrap.min.js"></script>
+  <script src="highlight.pack.js"></script>
   <link rel="stylesheet" href="github.css">
   <script type="text/javascript">
 
@@ -18,33 +19,38 @@ $(document).ready(function() {
       clearTimeout(timer); // Clear the timer so we don't end up with dupes.
       timer = setTimeout(function() { // assign timer a new timeout
                   result = $.getJSON("http://johnmacfarlane.net/cgi-bin/mystery-markdown",
-                       { text: $("#text").text() },
-                       function(result){ return result }); // run ajax request and store (so we can cancel)
-                       $("#preview").html(result);
-                  }, 1000); // 2000ms delay, tweak for faster/slower
+                       { text: $("#text").val() },
+                       function(res){ $("#preview").html(res.html);
+                                     $("#html").text(res.html).each(function(i, e) {
+                                       hljs.highlightBlock(e)
+                                       });
+                                    });
+                  }, 300); // 500ms delay, tweak for faster/slower
       });
    });
   </script>
   <style type="text/css">
     textarea#text { height: 300px; width: 95%; font-family: monospace; }
+    pre#html { height: 300px; width: 95%; color: #99999; font-size: 85%; font-family: monospace; }
     div.row { margin-top: 1em; }
     h3 { margin-top: 0; margin-bottom: 0; padding: 0; font-size: 100%; }
-    div#preview { height: 300px; background-color:#f5f5f5; border:1px solid #ccc;
-      padding-left: 8px; padding-top: 2px;
-      border:1px solid rgba(0, 0, 0, 0.15);
-      -webkit-border-radius:4px;-moz-border-radius:4px;border-radius:4px; }
+    div#preview { height: 300px; }
     footer { color: #555; text-align: center; margin: 1em; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>Standard Markdown Dingus</h1>
+  <h1>Markdown Dingus</h1>
+<h3>A live preview of <a href="http://github.com/jgm/Markdown">this implementation</a>.</h3>
   <div class="row">
-    <div class="span5">
-      <textarea id="text" maxlength=1000></textarea>
+    <div class="span4">
+      <textarea id="text" maxlength=500></textarea>
     </div>
-    <div class="span5">
+    <div class="span4">
       <div id="preview"></div>
+    </div>
+    <div class="span4">
+      <pre id="html"></div>
     </div>
 </div>
 <footer>
