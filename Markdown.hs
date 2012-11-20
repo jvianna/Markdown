@@ -1098,7 +1098,7 @@ schemeSet = Set.fromList $ schemes ++ map T.toUpper schemes
 
 -- Parse a URI, using heuristics to avoid capturing final punctuation.
 pUri :: Text -> Parser Inlines
-pUri protocol = do
+pUri scheme = do
   char ':'
   -- Scan non-ascii characters and ascii characters allowed in a URI.
   -- We allow punctuation except when followed by a space, since
@@ -1119,7 +1119,7 @@ pUri protocol = do
   let uriChunk = takeWhile1 isUriChar <|> inParens <|> innerPunct
   rest <- T.concat <$> many1 uriChunk
   -- now see if they amount to an absolute URI
-  let rawuri = protocol <> ":" <> rest
+  let rawuri = scheme <> ":" <> rest
   case parseURI (T.unpack $ escapeUri rawuri) of
        Just uri' -> return $ singleton $ Link (singleton $ Str rawuri)
                                   (T.pack $ show uri') (T.empty)
@@ -1264,14 +1264,14 @@ pAutolink = do
   t <- takeWhile1 (/='>')
   char '>'
   case t of
-       _ | startsWithProtocol t -> return $ autoLink t
+       _ | startsWithScheme t -> return $ autoLink t
          | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
          | otherwise   -> fail "Unknown contents of <>"
 
 
 -- This may not be the most efficient method.
-startsWithProtocol :: Text -> Bool
-startsWithProtocol =
+startsWithScheme :: Text -> Bool
+startsWithScheme =
   scanMatches $ choice (map stringCI schemes) >> skip (== ':')
   where scanMatches scanner t =
           case parseOnly scanner t of
