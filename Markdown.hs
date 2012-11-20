@@ -79,16 +79,16 @@
 --
 -- * Block elements inside list items need not be indented four
 --   spaces.  If they are indented beyond the bullet or numerical
---   list marker, they will be considered additional blocks inside
---   the list item.  So, the following is a list item with two
---   paragraphs:
+--   list marker and a following space, they will be considered
+--   additional blocks inside the list item.  So, the following is
+--   a list item with two paragraphs:
 --
 --       - one
 --
 --         two
 --
 --   This implies that code blocks inside list items must be indented
---   four spaces past the first column after the bullet or numerical
+--   five spaces past the first column after the bullet or numerical
 --   list marker.
 --
 -- * All symbols and punctuation marks can be backslash-escaped,
