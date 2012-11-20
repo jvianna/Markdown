@@ -615,10 +615,6 @@ blocksParser mbln =
                          else return empty
                   _ -> blocksParser Nothing
          | otherwise = do
-         -- TODO - this could be made a bit more efficient.  Once we pass
-         -- scanIndentSpace, we know we don't have indentSpace, so
-         -- scanNonidentSpaces could probably be replaced with scanSpaces in
-         -- things like scanReference.
           next <- tryScanners
                     [ (scanBlockquoteStart, blockquoteParser)
                     , (scanIndentSpace, indentedCodeBlockParser)
