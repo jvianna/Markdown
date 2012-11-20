@@ -826,10 +826,11 @@ parseLines _ firstLine = do
                  >> nfb scanCodeFenceLine
                  >> nfb (scanSpaces >> scanListStart Nothing)
 
--- Process a list of lines parsed by parseLines.
--- Check for setext headers and hrules.  Really this is only
--- needed for setext headers, since we don't know whether a
--- line is part of a setext header til we parse the next line.
+-- Process a list of lines and split it into paragraphs, hrules,
+-- and setext headers. Note that we can't have a separate parser
+-- for setext headers, given our no-backtracking goal, because we
+-- don't know whether a line is part of a setext header til we
+-- parse the next line.
 -- We could have added 'nfb scanHRuleLine' to paraLine above
 -- and added a separate handler for hrules.  But because some hrule
 -- lines are indistinguishable from setext header lines, it's easiest
