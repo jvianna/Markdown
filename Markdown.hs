@@ -1024,9 +1024,10 @@ pStr = do
   let underscore = skip (=='_')
   s <- T.intercalate "_" <$> strChunk `sepBy1` underscore
   -- check to see if we might have a bare URL:
-  if s `Set.member` uriProtocolsSet
-     then pUri s <|> return (singleton $ Str s)
-     else return (singleton $ Str s)
+  ((singleton $ Str s) <$ nfbChar ':')
+   <|> if s `Set.member` schemeSet
+          then pUri s <|> return (singleton $ Str s)
+          else return (singleton $ Str s)
  where isWordChar :: Char -> Bool
        -- This is a dispensable optimization over isAlphaNum, covering
        -- common cases first.
@@ -1058,14 +1059,42 @@ pSym = do
           <|> return (ch '\\')
      else return (ch c)
 
--- These could be added to...
-uriProtocols :: [Text]
-uriProtocols =
-  [ "http", "https", "ftp", "file", "mailto", "news", "telnet" ]
+-- http://www.iana.org/assignments/uri-schemes.html plus
+-- the unofficial schemes coap, doi, javascript.
+schemes :: [Text]
+schemes = [ -- unofficial
+            "coap","doi","javascript"
+           -- official
+           ,"aaa","aaas","about","acap"
+           ,"cap","cid","crid","data","dav","dict","dns","file","ftp"
+           ,"geo","go","gopher","h323","http","https","iax","icap","im"
+           ,"imap","info","ipp","iris","iris.beep","iris.xpc","iris.xpcs"
+           ,"iris.lwz","ldap","mailto","mid","msrp","msrps","mtqp"
+           ,"mupdate","news","nfs","ni","nih","nntp","opaquelocktoken","pop"
+           ,"pres","rtsp","service","session","shttp","sieve","sip","sips"
+           ,"sms","snmp","soap.beep","soap.beeps","tag","tel","telnet","tftp"
+           ,"thismessage","tn3270","tip","tv","urn","vemmi","ws","wss"
+           ,"xcon","xcon-userid","xmlrpc.beep","xmlrpc.beeps","xmpp","z39.50r"
+           ,"z39.50s"
+           -- provisional
+           ,"adiumxtra","afp","afs","aim","apt","attachment","aw"
+           ,"beshare","bitcoin","bolo","callto","chrome","chrome-extension"
+           ,"com-eventbrite-attendee","content","cvs","dlna-playsingle"
+           ,"dlna-playcontainer","dtn","dvb","ed2k","facetime","feed"
+           ,"finger","fish","gg","git","gizmoproject","gtalk"
+           ,"hcp","icon","ipn","irc","irc6","ircs","itms","jar"
+           ,"jms","keyparc","lastfm","ldaps","magnet","maps","market"
+           ,"message","mms","ms-help","msnim","mumble","mvn","notes"
+           ,"oid","palm","paparazzi","platform","proxy","psyc","query"
+           ,"res","resource","rmi","rsync","rtmp","secondlife","sftp"
+           ,"sgn","skype","smb","soldat","spotify","ssh","steam","svn"
+           ,"teamspeak","things","udp","unreal","ut2004","ventrilo"
+           ,"view-source","webcal","wtai","wyciwyg","xfire","xri"
+           ,"ymsgr" ]
 
 -- Make them a set for more efficient lookup.
-uriProtocolsSet :: Set.Set Text
-uriProtocolsSet = Set.fromList $ uriProtocols ++ map T.toUpper uriProtocols
+schemeSet :: Set.Set Text
+schemeSet = Set.fromList $ schemes ++ map T.toUpper schemes
 
 -- Parse a URI, using heuristics to avoid capturing final punctuation.
 pUri :: Text -> Parser Inlines
@@ -1243,7 +1272,7 @@ pAutolink = do
 -- This may not be the most efficient method.
 startsWithProtocol :: Text -> Bool
 startsWithProtocol =
-  scanMatches $ choice (map stringCI uriProtocols) >> skip (== ':')
+  scanMatches $ choice (map stringCI schemes) >> skip (== ':')
   where scanMatches scanner t =
           case parseOnly scanner t of
                Right ()   -> True
