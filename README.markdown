@@ -19,5 +19,8 @@ Then 'make'.  'make test' will run some tests.
 
 The library is released under the BSD license; see LICENSE for terms.
 
+Some of the test cases are borrowed from Michel Fortin's mdtest suite
+and John Gruber's original markdown test suite.
+
 Copyright &copy; 2012 John MacFarlane.
 
