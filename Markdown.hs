@@ -768,7 +768,7 @@ listParser first first' = do
              Right r  -> return r
   let scanMarkerWidth = () <$ count (listMarkerWidth listType) (skip (==' '))
   -- the indent required for blocks to be inside the list item:
-  let scanContentsIndent = string initialSpaces >> scanMarkerWidth
+  let scanContentsIndent = string initialSpaces >> scanMarkerWidth >> opt scanSpace
   let starter = string initialSpaces *> nfb scanMarkerWidth *>
                     scanSpaces *> scanListStart (Just listType)
   -- beginning of a block in the list item must be indented by
