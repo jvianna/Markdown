@@ -1038,10 +1038,10 @@ pStr = do
          | c >= 'a' && c <= 'z' = True
          | c >= 'A' && c <= 'Z' = True
          | c >= '0' && c <= '9' = True
-       isWordChar ',' = True
+       isWordChar ':' = False -- otherwise URL detection breaks
+       isWordChar ',' = True  -- but we allow other punctuation
        isWordChar '.' = True
        isWordChar '-' = True
-       isWordChar ':' = True
        isWordChar ';' = True
        isWordChar '(' = True
        isWordChar ')' = True
