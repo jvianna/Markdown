@@ -7,3 +7,7 @@ blank lines are omitted between block-level tags.
 
 The one (insignificant) semantic change is switching the order
 of emph and strong tags in the output for ***strong and emph***.
+
+We have removed Hard-wrapped_paragraphs_with_list-like_lines tests,
+because the new implementation no longer requires a blank line
+before a list.
