@@ -715,9 +715,8 @@ pReference = do
 -- 2. [a link *with emphasized ](/url) text*
 pLinkLabel :: Parser Text
 pLinkLabel = char '[' *> (T.concat <$>
-  (manyTill (regChunk <|> escaped <|> bracketed <|> codeChunk) (char ']')))
+  (manyTill (regChunk <|> pEscaped <|> bracketed <|> codeChunk) (char ']')))
   where regChunk = takeWhile1 (\c -> c /='`' && c /='[' && c /=']' && c /='\\')
-        escaped  = T.singleton <$> pEscapedChar
         codeChunk = snd <$> pCode'
         bracketed = inBrackets <$> pLinkLabel
         inBrackets t = "[" <> t <> "]"
@@ -729,10 +728,12 @@ pLinkUrl :: Parser Text
 pLinkUrl = do
   inPointy <- (char '<' >> return True) <|> return False
   if inPointy
-     then takeWhile (\c -> c /='\r' && c /='\n' && c /='>') <* char '>'
+     then T.pack <$> manyTill
+           (pSatisfy (\c -> c /='\r' && c /='\n')) (char '>')
      else T.concat <$> many (regChunk <|> parenChunk)
-    where regChunk = takeWhile1
-                 (\c -> not (isWhitespace c) && c /='(' && c /=')')
+    where regChunk = takeWhile1 (\c -> not (isWhitespace c) && c /= '(' &&
+                                   c /= ')' && c /= '\\')
+                    <|> pEscaped
           parenChunk = inParens . T.concat <$> (char '(' *>
                          manyTill (regChunk <|> parenChunk) (char ')'))
           inParens x = "(" <> x <> ")"
@@ -748,7 +749,8 @@ pLinkTitle = do
   nfbChar ')'
   let ender = if c == '(' then ')' else c
   let pEnder = char ender <* nfb (skip isAlphaNum)
-  let regChunk = takeWhile1 (/= ender)
+  let regChunk = takeWhile1 (\x -> x /= ender && x /= '\\')
+             <|> pEscaped
   let nestedChunk = (\x -> T.singleton c <> x <> T.singleton ender)
                       <$> pLinkTitle
   T.concat <$> manyTill (regChunk <|> nestedChunk) pEnder
@@ -858,11 +860,11 @@ processLines ws =
         isSpecialLine x = isSetextLine x || isHruleLine x
         markdown = singleton . Markdown . T.strip
 
--- Parsers that recognize charcater escapes.
+-- Parsers that recognize character escapes.
 
--- Parse a backslash-escaped character.
-pEscapedChar :: Parser Char
-pEscapedChar = char '\\' *> satisfy isEscapable
+-- Parses an escaped character and returns a Text.
+pEscaped :: Parser Text
+pEscaped = T.singleton <$> (skip (=='\\') *> satisfy isEscapable)
 
 -- Parses a (possibly escaped) character satisfying the predicate.
 pSatisfy :: (Char -> Bool) -> Parser Char
