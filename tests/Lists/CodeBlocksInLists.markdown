@@ -1,18 +1,18 @@
 1. list item
-      code
+       code
 
 2. list item
-  ~~~
-  code
-  ~~~
+   ~~~
+   code
+   ~~~
 
 3. ~~~
-code
-~~~
+   code
+   ~~~
 
 4. ~~~
-  code
-  ~~~
+   code
+   ~~~
 
 5.     code
-      code
+       code
