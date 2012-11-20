@@ -18,7 +18,7 @@ $(document).ready(function() {
       if (x) { x.abort() } // If there is an existing XHR, abort it.
       clearTimeout(timer); // Clear the timer so we don't end up with dupes.
       timer = setTimeout(function() { // assign timer a new timeout
-                  result = $.getJSON("http://johnmacfarlane.net/cgi-bin/mystery-markdown",
+                  result = $.getJSON("/cgi-bin/mystery-markdown",
                        { text: $("#text").val() },
                        function(res){ $("#preview").html(res.html);
                                      $("#html").text(res.html).each(function(i, e) {
@@ -31,7 +31,7 @@ $(document).ready(function() {
   </script>
   <style type="text/css">
     textarea#text { height: 300px; width: 95%; font-family: monospace; font-size: 92%; }
-    pre#html { height: 300px; width: 95%; color: #99999; font-size: 92%; font-family: monospace; }
+    pre#html { height: 300px; width: 95%; font-size: 92%; font-family: monospace; }
     div.row { margin-top: 1em; }
     h3 { margin-top: 0; margin-bottom: 0; padding: 0; font-size: 100%; }
     div#preview { height: 300px; }
@@ -53,8 +53,5 @@ $(document).ready(function() {
       <pre id="html"></div>
     </div>
 </div>
-<footer>
-&copy; 2012 <a href="http://johnmacfarlane.net">John MacFarlane</a>
-</footer>
 </body>
 </html>
