@@ -769,10 +769,11 @@ listParser first first' = do
         case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
+  let scanMarkerWidth = () <$ count (listMarkerWidth listType) (skip (==' '))
   -- the indent required for blocks to be inside the list item:
-  let scanContentsIndent = () <$ count
-         (T.length initialSpaces + listMarkerWidth listType) (skip (==' '))
-  let starter = string initialSpaces *> scanListStart (Just listType)
+  let scanContentsIndent = string initialSpaces >> scanMarkerWidth
+  let starter = string initialSpaces *> nfb scanMarkerWidth *>
+                    scanSpaces *> scanListStart (Just listType)
   -- beginning of a block in the list item must be indented by
   -- scancontentsindent.
   let blockScanner = scanContentsIndent <|> scanBlankline
