@@ -573,12 +573,6 @@ nextLine scanType = do
 getLines :: BlockParser [Text]
 getLines = nextLine LineScan >>= maybe (return []) (\l -> (l:) <$> getLines)
 
--- Like getLines, but stops when a line matches a test.  (The tested
--- line is consumed but not returned.)
-getLinesTill :: (Text -> Bool) -> BlockParser [Text]
-getLinesTill f = nextLine LineScan >>=
-  maybe (return []) (\l -> if f l then return [] else (l:) <$> getLines)
-
 -- Parse a Text line by line and return a sequence of Blocks and a reference
 -- map.
 parseBlocks :: Text -> (Blocks, ReferenceMap)
@@ -671,9 +665,10 @@ codeFenceParser :: Text -> Text -> BlockParser Blocks
 codeFenceParser ln _ = do
   case parseOnly codeFenceParserLine ln of
        Left _  -> error "Could not parse codeFenceParserLine" -- should not happen
-       Right (fence, rawattr) ->
-         singleton . CodeBlock (parseCodeAttributes rawattr)
-          . T.unlines . reverse <$> getLinesTill (fence `T.isPrefixOf`)
+       Right (fence, rawattr) -> do
+         lns <- withLineScanner (nfb $ string fence) $ getLines
+         _ <- nextLine LineScan -- consume the fence at the end
+         return $ singleton . CodeBlock (parseCodeAttributes rawattr) . T.unlines $ lns
 
 -- Parse whatever remains on a fenced code block line after the fence.
 -- The first word is the language, the rest is currently ignored,
