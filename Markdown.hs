@@ -478,7 +478,7 @@ parseBullet = do
 parseListNumber :: Parser ListType
 parseListNumber =
   (parseListNumberDig <|> parseListNumberPar) <*
-     ((scanSpace <* scanSpaces) <|> scanBlankline)
+     (scanSpace <|> scanBlankline)
   where parseListNumberDig = do
            num <- decimal  -- a string of decimal digits
            wrap <-  PeriodFollowing <$ skip (== '.')
