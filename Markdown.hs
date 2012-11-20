@@ -388,7 +388,7 @@ nfbChar c = nfb (skip (==c))
 parseAtxHeaderStart :: Parser Int
 parseAtxHeaderStart = do
   hashes <- takeWhile1 (=='#')
-  scanSpace
+  scanSpace <|> scanBlankline
   return $ T.length hashes
 
 -- Scan an ATX header start, including the space.
