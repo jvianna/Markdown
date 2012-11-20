@@ -17,7 +17,7 @@ To compile, get the Haskell Platform, then install dependencies:
 
 Then 'make'.  'make test' will run some tests.
 
-The library will be open sourced in due time.
+The library is released under the BSD license; see LICENSE for terms.
 
 Copyright &copy; 2012 John MacFarlane.
 
