@@ -1261,23 +1261,14 @@ pRawHtml = singleton . RawHtml <$> (snd <$> pHtmlTag <|> pHtmlComment)
 -- Markdown.pl does email obfuscation; we don't bother with that here.
 pAutolink :: Parser Inlines
 pAutolink = do
-  char '<'
-  t <- takeWhile1 (/='>')
-  char '>'
-  case t of
-       _ | startsWithScheme t -> return $ autoLink t
-         | T.any (=='@') t && T.all (/=' ') t -> return $ emailLink t
+  skip (=='<')
+  s <- takeWhile1 (\c -> c /= ':' && c /= '@')
+  rest <- takeWhile1 (\c -> c /='>' && c /= ' ')
+  skip (=='>')
+  case True of
+       _ | "@" `T.isPrefixOf` rest -> return $ emailLink (s <> rest)
+         | s `Set.member` schemeSet -> return $ autoLink (s <> rest)
          | otherwise   -> fail "Unknown contents of <>"
-
-
--- This may not be the most efficient method.
-startsWithScheme :: Text -> Bool
-startsWithScheme =
-  scanMatches $ choice (map stringCI schemes) >> skip (== ':')
-  where scanMatches scanner t =
-          case parseOnly scanner t of
-               Right ()   -> True
-               _          -> False
 
 autoLink :: Text -> Inlines
 autoLink t = singleton $ Link (singleton $ Str t) (escapeUri t) (T.empty)
