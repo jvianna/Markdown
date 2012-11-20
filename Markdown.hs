@@ -218,10 +218,11 @@ data Inline = Str Text
 type Inlines = Seq Inline
 
 -- Returns width of a list marker based on the ListType.
+-- Width includes a following space.
 listMarkerWidth :: ListType -> Int
-listMarkerWidth (Bullet _) = 1
+listMarkerWidth (Bullet _) = 2
 listMarkerWidth (Numbered wrap n) =
-  (if wrap == ParensAround then 2 else 1) +
+  (if wrap == ParensAround then 3 else 2) +
   case n of
        _ | n < 10    -> 1
          | n < 100   -> 2
