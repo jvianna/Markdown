@@ -43,40 +43,39 @@
 --   your ordered lists.  A new list starts if you change the
 --   form of the delimiter. So, the following is two lists:
 --
---      1. one
---      2. two
---      1) one
---      2) two
+--       1. one
+--       2. two
+--       1) one
+--       2) two
 --
 -- * A new bullet lists starts if you change the bullet marker.
 --   So, the following is two consecutive bullet lists:
 --
---      + one
---      + two
---      - one
---      - two
+--       + one
+--       + two
+--       - one
+--       - two
 --
 -- * A new list starts if you change from tight spacing to loose.
 --   So, the following is parsed as a tight list followed by a loose
 --   list:
 --
---      - one
---      - two
+--       - one
+--       - two
 --
---      - one
+--       - one
 --
---      - two
+--       - two
 --
--- * Two consecutive blank lines breaks out of a list or blockquote
---   construction.  So, the following is a list followed by a code
---   block:
+-- * Two consecutive blank lines breaks out of a list.
+--   So, the following is a list followed by a code block:
 --
---      -   one
+--       -   one
 --
---      -   two
+--       -   two
 --
 --
---          code
+--           code
 --
 -- * Block elements inside list items need not be indented four
 --   spaces.  If they are indented beyond the bullet or numerical
@@ -84,9 +83,9 @@
 --   the list item.  So, the following is a list item with two
 --   paragraphs:
 --
---      - one
+--       - one
 --
---        two
+--         two
 --
 --   This implies that code blocks inside list items must be indented
 --   four spaces past the first column after the bullet or numerical
@@ -113,20 +112,33 @@
 --   without `<p>` tags.
 --
 -- * Sublists work like other block elements inside list items;
---   they must be indented past the bullet or numerical list marker
+--   they  must be indented past the bullet or numerical list marker
 --   (but no more than three spaces past, or they will be interpreted
 --   as indented code).
 --
 -- * ATX headers must have a space after the initial `###`s.
+--
+-- * A blank line will end a blockquote. So, the following is a single
+--   blockquote:
+--
+--        > hi
+--        >
+--        > there
+--
+--   But this is two blockquotes:
+--
+--        > hi
+--
+--        > there
 --
 -- * Blank lines are not required before horizontal rules, blockquotes,
 --   lists, code blocks, or headers.  They are not required after, either,
 --   though in many cases "laziness" will effectively require a blank
 --   line after.  For example, in
 --
---      Hello there.
---      > A quote.
---      Still a quote.
+--        Hello there.
+--        > A quote.
+--        Still a quote.
 --
 --   the "Still a quote." is part of the block quote, because of laziness
 --   (the ability to leave off the > from the beginning of subsequent
