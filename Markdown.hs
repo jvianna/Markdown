@@ -1127,7 +1127,8 @@ pUri scheme = do
 
 -- Escape a URI.
 escapeUri :: Text -> Text
-escapeUri = T.pack . escapeURIString (not . isSpace) . T.unpack
+escapeUri = T.pack . escapeURIString
+               (\c -> isAscii c && not (isSpace c)) . T.unpack
 
 -- Parses material enclosed in *s, **s, _s, or __s.
 -- Designed to avoid backtracking.
