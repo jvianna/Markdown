@@ -14,3 +14,8 @@
 \# Not a header
 
 \[foo]: /url "not a reference"
+
+\$ \^ \; can be escaped.
+\a \b \T cannot.
+unicode symbols can: \‥.
+unicode letters cannot: \π.
