@@ -494,8 +494,7 @@ parseListNumber =
 -- Scan the beginning of a reference block: a bracketed label
 -- followed by a colon.  We assume that the label is on one line.
 scanReference :: Scanner
-scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':' >>
-  (scanSpace <|> endOfLine)
+scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':'
 
 -- BlockParser:  parse the input line by line to discern block-level
 -- structure.
@@ -714,7 +713,6 @@ pReference = do
   char ':'
   scanSpnl
   url <- pLinkUrl
-  scanSpnl
   tit <- option T.empty $ scanSpnl >> pLinkTitle
   scanSpaces
   endOfInput
