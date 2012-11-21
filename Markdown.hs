@@ -118,16 +118,17 @@
 --
 -- * ATX headers must have a space after the initial `###`s.
 --
--- * A blank line will end a blockquote. So, the following is a single
+-- * Two blank lines will end a blockquote. So, the following is a single
 --   blockquote:
 --
 --        > hi
---        >
+--
 --        > there
 --
 --   But this is two blockquotes:
 --
 --        > hi
+--
 --
 --        > there
 --
@@ -154,7 +155,7 @@ import Data.Char (isAscii, isSpace, isPunctuation, isSymbol,
                     isDigit, isHexDigit, isAlphaNum, isLetter)
 import Data.List (intersperse)
 import Network.URI (parseURI, isAllowedInURI, escapeURIString)
-import Data.Monoid ((<>), mconcat)
+import Data.Monoid
 import Data.Foldable (foldMap, toList)
 import Control.Applicative hiding (optional,empty)
 import Data.Sequence (Seq, singleton, empty, (<|))
@@ -172,7 +173,7 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
--- import Debug.Trace
+import Debug.Trace
 
 -- Structured representation of a document.
 
@@ -408,10 +409,6 @@ parseAtxHeaderStart = do
 scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
--- Scan a setext header line.
-scanSetextHeaderLine :: Scanner
-scanSetextHeaderLine = takeWhile1 (\c -> c=='-' || c == '=') *> scanBlankline
-
 -- Scan a horizontal rule line: "...three or more hyphens, asterisks,
 -- or underscores on a line by themselves. If you wish, you may use
 -- spaces between the hyphens or asterisks."
@@ -530,15 +527,31 @@ scanReference = scanNonindentSpaces >> pLinkLabel >> scanChar ':'
 -- hand this off to the inline parser after we've parsed all the
 -- blocks and the link references.
 
-type BlockParser = State BlockParserState
 
-data BlockParserState = BlockParserState{
-          inputLines    :: [Text]        -- lines to be parsed
-        , lastLine      :: Maybe Text    -- last line parsed
-        , references    :: ReferenceMap  -- reference map
-        , lineScanners  :: [Scanner]     -- list of line scanners
-        , blockScanners :: [Scanner]     -- list of block scanners
-        }
+parseBlocks :: Text -> (Blocks, ReferenceMap)
+parseBlocks t = case inputLines s of
+                     []       -> (bs, references s)
+                     (next:_) -> error $ "Parsing stopped at the line: " ++ T.unpack next
+  where (bs, s) = runState (parseLines False Nothing)
+                    ParserState{ inputLines = map tabFilter $ T.lines t
+                               , lastLine = Nothing
+                               , references = M.empty
+                               , lineScanners = []
+                               , blockScanners = []
+                               , textLines = []
+                               }
+
+
+data ParserState = ParserState{
+         blockScanners  :: [Scanner]
+       , lineScanners   :: [Scanner]
+       , inputLines     :: [Text]
+       , lastLine       :: Maybe Text
+       , references     :: ReferenceMap
+       , textLines      :: [Text]
+       }
+
+type BlockParser = State ParserState
 
 -- Add a scanner to the line scanner stack and run a parser,
 -- then pop the scanner.
@@ -560,87 +573,112 @@ withBlockScanner scanner parser = do
   modify $ \st -> st{ blockScanners = scanners }
   return result
 
--- When we're getting a new line, we need to know whether to
--- apply the block scanners or the line scanners.
-data ScanType = BlockScan | LineScan deriving Eq
 
--- Apply scanners to next line (block scanners if BlockScan,
--- line scanners if LineScan), and return Just the rest of the line
--- if they match, Nothing if there is no more input or they
--- don't match.
-nextLine :: ScanType -> BlockParser (Maybe Text)
-nextLine scanType = do
+peekTwoLines :: BlockParser (Maybe (Text, Text))
+peekTwoLines = do
+  xs <- gets inputLines
+  case xs of
+       []      -> return Nothing
+       (x:[])  -> return (Just (x,""))
+       (x:y:_) -> return (Just (x,y))
+
+advance :: BlockParser ()
+advance = do
   lns <- gets inputLines
-  scanners <- gets $ case scanType of
-                           BlockScan -> blockScanners
-                           LineScan  -> lineScanners
   case lns of
-       []     -> return Nothing
-       (x:xs) -> case applyScanners scanners x of
-                      Just x' -> do
-                         modify $ \st -> st{ inputLines = xs
-                                           , lastLine = Just x }
-                         return $ Just x'
-                      Nothing -> return Nothing
+       (x:xs) -> modify $ \st -> st{
+                     inputLines = xs
+                   , lastLine = Just x }
+       []     -> error "Cannot advance past end of text"
 
--- Parse lines (after applying the line scanners at the beginning of
--- each) until the line scanners won't apply any more or we're out
--- of input.
+addTextLine :: Text -> BlockParser ()
+addTextLine t = modify $ \st -> st{ textLines = t : textLines st }
+
+popTextLines :: BlockParser Blocks
+popTextLines = do
+  t <- T.strip . joinLines . reverse <$> gets textLines
+  modify $ \st -> st{ textLines = [] }
+  if T.null t
+     then return empty
+     else return $ singleton $ Para $ singleton $ Markdown t
+
+parseLines :: Bool -> Maybe Text -> BlockParser Blocks
+parseLines continuation mbFirstLine = do
+  mblns <- peekTwoLines
+  bscanners <- gets blockScanners
+  case mblns of
+    Nothing  -> popTextLines
+    Just (thisLine, nextLine)
+      | maybe (isEmptyLine thisLine) isEmptyLine mbFirstLine -> do
+        tls <- popTextLines
+        if isEmptyLine nextLine
+           then if null bscanners
+                   then (tls <>) <$> (advance >> parseLines False Nothing) -- skip
+                   else return tls     -- two blank lines break out of block container
+           else (tls <>) <$> (advance >> parseLines False Nothing)      -- skip
+      | otherwise -> do
+      case mbFirstLine `mplus` applyScanners bscanners thisLine of
+           Just thisLine' -> tryScanners scannerPairs thisLine'
+           Nothing -> if continuation
+                         then case parseOnly (msum $ map fst scannerPairs)
+                                   thisLine of
+                                    Right _ -> popTextLines
+                                    Left _  -> parseTextLine thisLine
+                         else popTextLines
+
+      where tryScanners :: [(Scanner, Text -> Text -> BlockParser Blocks)]
+                        -> Text -> BlockParser Blocks
+            tryScanners [] ln
+               | mbFirstLine == Nothing && fmap isSetextLine
+                  (applyScanners bscanners nextLine) == Just True  = do
+                     tls <- popTextLines
+                     let lev = if T.any (=='=') nextLine then 1 else 2
+                     next <- setextHeaderParser lev ln ln
+                     rest <- parseLines False Nothing
+                     return $ tls <> next <> rest
+               | otherwise = parseTextLine ln
+            tryScanners ((s,p):rest) ln =
+               case applyScanners [s] ln of
+                    Just ln' -> do
+                      tls <- popTextLines
+                      next <- p ln ln'
+                      rest' <- parseLines False Nothing
+                      return $ tls <> next <> rest'
+                    Nothing  -> tryScanners rest ln
+            scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
+            scannerPairs = [
+                (scanBlankline, \_ _ -> empty <$ advance)
+              , (scanBlockquoteStart, blockquoteParser)
+              , (scanIndentSpace, indentedCodeBlockParser)
+              , (scanAtxHeaderStart, atxHeaderParser)
+              , (scanCodeFenceLine, codeFenceParser)
+              , (scanReference, referenceParser)
+              , (scanHRuleLine, hruleParser)
+              , (scanNonindentSpaces >> scanListStart Nothing, listParser)
+              , (scanHtmlBlockStart, htmlBlockParser) ]
+            isSetextLine  x = not (T.null x) &&
+                               (T.all (=='=') x || T.all (=='-') x)
+
+
+parseTextLine :: Text -> BlockParser Blocks
+parseTextLine thisLine = do
+    line_scanners <- gets lineScanners
+    case applyScanners line_scanners thisLine of
+          Just x
+            | isEmptyLine x -> popTextLines
+            | otherwise -> addTextLine x >> advance >> parseLines True Nothing
+          Nothing -> popTextLines
+
 getLines :: BlockParser [Text]
-getLines = nextLine LineScan >>= maybe (return []) (\l -> (l:) <$> getLines)
-
--- Parse a Text line by line and return a sequence of Blocks and a reference
--- map.
-parseBlocks :: Text -> (Blocks, ReferenceMap)
-parseBlocks t = case inputLines s of
-                     []       -> (bs, references s)
-                     (next:_) -> error $ "Parsing stopped at the line: " ++ T.unpack next
-  where (bs, s) = runState (blocksParser Nothing)
-                    BlockParserState{ inputLines = map tabFilter $ T.lines t
-                                    , lastLine = Nothing
-                                    , references = M.empty
-                                    , lineScanners = []
-                                    , blockScanners = []
-                                    }
-
--- If the parameter is Nothing, get the next line (applying block scanners),
--- decide what kind of block we have, and call the appropriate block parser.
--- If parameter is Just text, then we use text as our first line instead of
--- getting a new line.  (This is used when we need to call blocksParser again
--- from the subsidiary block parser.)
-blocksParser :: Maybe Text -> BlockParser Blocks
-blocksParser mbln =
-  case mbln of
-       Nothing -> nextLine BlockScan >>= maybe (return empty) doLine
-       Just ln -> doLine ln
- where doLine ln
-         | isEmptyLine ln = do
-             xs <- gets inputLines
-             case xs of
-                  (x:_) | isEmptyLine x -> do
-                      -- two blanklines ends block parsing in a container
-                      bscs <- gets blockScanners
-                      if null bscs  -- we're at outer level, not in container
-                         then blocksParser Nothing -- just skip the blank
-                         else return empty
-                  _ -> blocksParser Nothing
-         | otherwise = do
-          next <- tryScanners
-                    [ (scanBlockquoteStart, blockquoteParser)
-                    , (scanIndentSpace, indentedCodeBlockParser)
-                    , (scanAtxHeaderStart, atxHeaderParser)
-                    , (scanCodeFenceLine, codeFenceParser)
-                    , (scanReference, referenceParser)
-                    , (scanNonindentSpaces >> scanListStart Nothing, listParser)
-                    , (scanHtmlBlockStart, htmlBlockParser)
-                    , (return (), parseLines)
-                    ] ln
-          rest <- blocksParser Nothing
-          return (next <> rest)
-       tryScanners [] _            = error "Empty scanner list"
-       tryScanners ((s,p):rest) ln = case applyScanners [s] ln of
-                                          Just ln' -> p ln ln'
-                                          Nothing  -> tryScanners rest ln
+getLines = do
+  advance
+  line_scanners <- gets lineScanners
+  mbpeek <- peekTwoLines
+  case mbpeek of
+       Just (l,_) -> case applyScanners line_scanners l of
+                     Just l' -> (l':) <$> getLines
+                     Nothing -> return []
+       Nothing -> return []
 
 -- Specific block parsers.  These take two parameters. The first
 -- is the whole line, before applying the scanner for this type
@@ -650,10 +688,9 @@ blocksParser mbln =
 
 -- Parse a blockquote.
 blockquoteParser :: Text -> Text -> BlockParser Blocks
-blockquoteParser _ firstLine = singleton . Blockquote <$>
+blockquoteParser _ _ = singleton . Blockquote <$>
   (withLineScanner (opt scanBlockquoteStart)
-    $ withBlockScanner scanBlockquoteStart
-        $ blocksParser $ Just firstLine)
+    $ withBlockScanner scanBlockquoteStart $ parseLines False Nothing)
 
 -- Parse an indented code block.
 indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
@@ -661,19 +698,6 @@ indentedCodeBlockParser _ ln = do
   lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
-
--- Parse an ATX header.
-atxHeaderParser :: Text -> Text -> BlockParser Blocks
-atxHeaderParser ln _ = do
-  let ln' = T.strip $ T.dropAround (=='#') ln
-  let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
-                       then ln' <> "#"  -- escaped final #
-                       else ln'
-  case parseOnly parseAtxHeaderStart ln of
-        Right lev
-          | lev >= 1 && lev <= 6 -> return
-                     $ singleton . Header lev . singleton . Markdown $ inside
-        _  -> return $ singleton $ Para $ singleton $ Str ln
 
 -- Parse a fenced code block.  Note:  if the fence is never terminated,
 -- the entire rest of the document will be put into a fenced code block.
@@ -683,7 +707,7 @@ codeFenceParser ln _ = do
        Left _  -> error "Could not parse codeFenceParserLine" -- should not happen
        Right (fence, rawattr) -> do
          lns <- withLineScanner (nfb $ string fence) $ getLines
-         _ <- nextLine LineScan -- consume the fence at the end
+         advance -- consume the fence at the end
          return $ singleton . CodeBlock (parseCodeAttributes rawattr) . T.unlines $ lns
 
 -- Parse whatever remains on a fenced code block line after the fence.
@@ -694,6 +718,29 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
   where lang = case T.words (T.strip t) of
                      []    -> Nothing
                      (l:_) -> Just l
+
+-- Parse an ATX header.
+atxHeaderParser :: Text -> Text -> BlockParser Blocks
+atxHeaderParser ln _ = do
+  advance  -- consume this line
+  let ln' = T.strip $ T.dropAround (=='#') ln
+  let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
+                       then ln' <> "#"  -- escaped final #
+                       else ln'
+  case parseOnly parseAtxHeaderStart ln of
+        Right lev
+          | lev >= 1 && lev <= 6 -> return
+                     $ singleton . Header lev . singleton . Markdown $ inside
+        _  -> return $ singleton $ Para $ singleton $ Str ln
+
+setextHeaderParser :: Int -> Text -> Text -> BlockParser Blocks
+setextHeaderParser lev _ ln = do
+  advance -- consume this line
+  advance -- consume underline
+  return $ singleton $ Header lev $ singleton $ Markdown ln
+
+hruleParser :: Text -> Text -> BlockParser Blocks
+hruleParser _ _ = (singleton HRule) <$ advance
 
 -- Parse a link reference.  If parsing fails (rare), return a plain
 -- paragraph with the first line; otherwise, return an empty sequence
@@ -794,7 +841,7 @@ listParser first first' = do
                     nfb (scanSpaces >> scanListStart Nothing)
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
-               $ blocksParser $ Just first'
+               $ parseLines False $ Just first'
   prev <- gets lastLine
   -- Check to see if there is blank space before the next list item.
   -- If not, we have a tight list.
@@ -809,71 +856,24 @@ listParser first first' = do
 listItemsParser :: Bool -> Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
 listItemsParser isTight starter blockScanner lineScanner = do
   -- Get next line and chomp off list marker.
-  mbfirst <- withBlockScanner starter $ nextLine BlockScan
-  case mbfirst of
+  mbfirsttwo <- peekTwoLines
+  bscanners <- gets blockScanners
+  case mbfirsttwo of
        Nothing    -> return []
-       Just first -> do
-         item <- withBlockScanner blockScanner
-                 $ withLineScanner lineScanner
-                 $ blocksParser $ Just first
-         prev <- gets lastLine
-         rest <- case prev of
-                      -- We stop list parsing if we go from tight to loose:
-                      Just l | isEmptyLine l && isTight -> return []
-                      _  ->
-                       listItemsParser isTight starter blockScanner lineScanner
-         return (item:rest)
-
--- Parse lines inside a paragraph.
-parseLines :: Text -> Text -> BlockParser Blocks
-parseLines _ firstLine = do
-  processLines <$> (firstLine:) <$> withLineScanner paraLine getLines
- where paraLine =   nfb scanBlankline
-                 >> nfb scanIndentSpace
-                 >> nfb scanBlockquoteStart
-                 >> nfb scanAtxHeaderStart
-                 >> nfb scanCodeFenceLine
-                 >> nfb (scanSpaces >> scanListStart Nothing)
-
--- Process a list of lines and split it into paragraphs, hrules,
--- and setext headers. Note that we can't have a separate parser
--- for setext headers, given our no-backtracking goal, because we
--- don't know whether a line is part of a setext header til we
--- parse the next line.
--- We could have added 'nfb scanHRuleLine' to paraLine above
--- and added a separate handler for hrules.  But because some hrule
--- lines are indistinguishable from setext header lines, it's easiest
--- to do it this way.
-processLines :: [Text] -> Blocks
-processLines [] = empty
-processLines ws =
-  case break isSpecialLine ws of
-        (xs, [])           -> singleton $ Para $ markdown $ joinLines xs
-        ([],(y:ys))
-          | isHruleLine y  -> HRule
-                              <| processLines ys
-          | otherwise      -> Para (markdown y)
-                              <| processLines ys
-        (xs,(y:ys))
-          | isSetextLine y ->
-              case reverse xs of
-                    []     -> error "Should not happen"
-                    [z]    -> Header (setextLevel y) (markdown z)
-                              <| processLines ys
-                    (z:zs) -> Para (markdown $ joinLines $ reverse zs)
-                           <| Header (setextLevel y) (markdown z)
-                           <| processLines ys
-          | isHruleLine y  -> Para (markdown $ joinLines xs)
-                              <| HRule
-                              <| processLines ys
-          | otherwise      -> error "Should not happen"
-  where isSetext1Line x = not (T.null x) && T.all (=='=') (T.stripEnd x)
-        isSetext2Line x = not (T.null x) && T.all (=='-') (T.stripEnd x)
-        isSetextLine  x = isSetext1Line x || isSetext2Line x
-        setextLevel   x = if isSetext1Line x then 1 else 2
-        isHruleLine = maybe False (const True) . applyScanners [scanHRuleLine]
-        isSpecialLine x = isSetextLine x || isHruleLine x
-        markdown = singleton . Markdown . T.strip
+       Just (first,_) -> do
+         case applyScanners (bscanners ++ [starter]) first of
+              Nothing     -> return []
+              Just first' -> do
+                item <- withBlockScanner blockScanner
+                        $ withLineScanner lineScanner
+                        $ parseLines False $ Just first'
+                prev <- gets lastLine
+                rest <- case prev of
+                             -- We stop list parsing if we go from tight to loose:
+                             Just l | isEmptyLine l && isTight -> return []
+                             _  ->
+                              listItemsParser isTight starter blockScanner lineScanner
+                return (item:rest)
 
 -- Parsers that recognize character escapes.
 
@@ -954,10 +954,11 @@ blockHtmlTags = Set.fromList
 -- Markdown.pl didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
+  st <- get  -- store state so we can backtrack
   lns <- withLineScanner (nfb scanBlankline) getLines
   case parseOnly (pHtmlBlock <* scanBlankline <* endOfInput)
        $ joinLines (ln:lns) of
-       Left _  -> return $ processLines (ln:lns)
+       Left _  -> put st >> addTextLine ln >> advance >> parseLines True Nothing
        Right r -> return r
 
 pHtmlBlock :: Parser Blocks
