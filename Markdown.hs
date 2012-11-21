@@ -408,6 +408,10 @@ parseAtxHeaderStart = do
 scanAtxHeaderStart :: Scanner
 scanAtxHeaderStart = () <$ parseAtxHeaderStart
 
+-- Scan a setext header line.
+scanSetextHeaderLine :: Scanner
+scanSetextHeaderLine = takeWhile1 (\c -> c=='-' || c == '=') *> scanBlankline
+
 -- Scan a horizontal rule line: "...three or more hyphens, asterisks,
 -- or underscores on a line by themselves. If you wish, you may use
 -- spaces between the hyphens or asterisks."
