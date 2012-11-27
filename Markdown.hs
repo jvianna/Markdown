@@ -67,16 +67,6 @@
 --
 --       - two
 --
--- * Two consecutive blank lines breaks out of a list.
---   So, the following is a list followed by a code block:
---
---       -   one
---
---       -   two
---
---
---           code
---
 -- * Block elements inside list items need not be indented four
 --   spaces.  If they are indented beyond the bullet or numerical
 --   list marker and a following space, they will be considered
@@ -118,17 +108,16 @@
 --
 -- * ATX headers must have a space after the initial `###`s.
 --
--- * Two blank lines will end a blockquote. So, the following is a single
+-- * A blank line will end a blockquote. So, the following is a single
 --   blockquote:
 --
 --        > hi
---
+--        >
 --        > there
 --
 --   But this is two blockquotes:
 --
 --        > hi
---
 --
 --        > there
 --
@@ -608,15 +597,7 @@ parseLines continuation mbFirstLine = do
   bscanners <- gets blockScanners
   case mblns of
     Nothing  -> popTextLines
-    Just (thisLine, nextLine)
-      | maybe (isEmptyLine thisLine) isEmptyLine mbFirstLine -> do
-        tls <- popTextLines
-        if isEmptyLine nextLine
-           then if null bscanners
-                   then (tls <>) <$> (advance >> parseLines False Nothing) -- skip
-                   else return tls     -- two blank lines break out of block container
-           else (tls <>) <$> (advance >> parseLines False Nothing)      -- skip
-      | otherwise -> do
+    Just (thisLine, nextLine) ->
       case mbFirstLine `mplus` applyScanners bscanners thisLine of
            Just thisLine' -> tryScanners scannerPairs thisLine'
            Nothing -> if continuation
@@ -665,7 +646,7 @@ parseTextLine thisLine = do
     line_scanners <- gets lineScanners
     case applyScanners line_scanners thisLine of
           Just x
-            | isEmptyLine x -> popTextLines
+            | isEmptyLine x -> advance >> popTextLines
             | otherwise -> addTextLine x >> advance >> parseLines True Nothing
           Nothing -> popTextLines
 
