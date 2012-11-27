@@ -18,7 +18,7 @@ bin/markdown-prof: bin/markdown.hs Markdown.hs
 	ghc --make -rtsopts -auto-all -prof -o $@ bin/markdown.hs
 
 bin/markdown-opt: bin/markdown.hs Markdown.hs
-	ghc --make -O2 -o $@ bin/markdown.hs
+	ghc --make -fforce-recomp -O2 -o $@ bin/markdown.hs
 
 clean:
 	-@rm *.o *.hi bin/markdown bin/markdown-prof bin/markdown-opt \
