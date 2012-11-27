@@ -3,7 +3,7 @@ bin/markdown: bin/markdown.hs Markdown.hs
 
 .PHONY: clean test prof opt bench
 
-test:
+test: bin/markdown
 	make -C tests --quiet clean all
 
 prof: bin/markdown-prof
