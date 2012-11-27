@@ -199,7 +199,7 @@ import qualified Text.Blaze.Html.Renderer.Text as BT
 import Text.Blaze.Html hiding(contents)
 
 -- for debugging
-import Debug.Trace
+-- import Debug.Trace
 
 -- Structured representation of a document.
 
