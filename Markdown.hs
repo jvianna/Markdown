@@ -726,7 +726,7 @@ parseCodeAttributes t = CodeAttr { codeLang = lang }
 atxHeaderParser :: Text -> Text -> BlockParser Blocks
 atxHeaderParser ln _ = do
   advance  -- consume this line
-  let ln' = T.strip $ T.dropAround (=='#') ln
+  let ln' = T.strip $ T.dropAround (=='#') $ T.strip ln
   let inside = if "\\" `T.isSuffixOf` ln' && "#" `T.isSuffixOf` ln
                        then ln' <> "#"  -- escaped final #
                        else ln'
