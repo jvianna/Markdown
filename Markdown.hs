@@ -809,6 +809,7 @@ listParser first first' = do
         case parseOnly listStart first of
              Left _   -> fail "Could not parse list marker"
              Right r  -> return r
+  lscanners <- gets lineScanners
   let scanMarkerWidth = () <$ count (listMarkerWidth listType) (skip (==' '))
   -- the indent required for blocks to be inside the list item:
   let scanContentsIndent = string initialSpaces >> scanMarkerWidth
@@ -827,8 +828,13 @@ listParser first first' = do
   -- Check to see if there is blank space before the next list item.
   -- If not, we have a tight list.
   let isTight = case prev of
-                     Just l | not (isEmptyLine l) -> True
-                     _                            -> False
+                     Nothing                 -> True  -- shouldn't happen
+                     Just l
+                       | isEmptyLine l       -> False
+                       | otherwise           ->
+                           case applyScanners lscanners l of
+                                Just x | isEmptyLine x  -> False
+                                _                       -> True
   restItems <- listItemsParser isTight starter blockScanner lineScanner
   let isTight' = isTight || null restItems  -- a one-item list is tight.
   return $ singleton $ List isTight' listType (firstItem:restItems)
