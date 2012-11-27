@@ -3,7 +3,7 @@ PROG ?= bin/markdown
 bin/markdown: bin/markdown.hs Markdown.hs
 	ghc -Wall -fno-warn-unused-do-bind --make ${GHCOPTS} -o $@ $<
 
-.PHONY: clean test prof opt bench
+.PHONY: clean test prof opt bench linecount
 
 test: $(PROG)
 	make -C tests --quiet clean all
@@ -21,6 +21,10 @@ bin/markdown-prof: bin/markdown.hs Markdown.hs
 
 bin/markdown-opt: bin/markdown.hs Markdown.hs
 	ghc --make -fforce-recomp -O2 -o $@ bin/markdown.hs
+
+linecount:
+	@echo "Non-comment, non-blank lines:" ; \
+	grep '^[^-]' Markdown.hs | wc -l
 
 clean:
 	-@rm *.o *.hi bin/markdown bin/markdown-prof bin/markdown-opt \
