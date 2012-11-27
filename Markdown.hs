@@ -143,8 +143,35 @@
 --   the "Still a quote." is part of the block quote, because of laziness
 --   (the ability to leave off the > from the beginning of subsequent
 --   lines).  Laziness also affects lists. However, we can have a code
---   block, header, or horizontal rule between two paragraphs without any
+--   block, ATX header, or horizontal rule between two paragraphs without any
 --   blank lines.
+--
+-- * Raw HTML blocks work a bit differently than in Markdown.pl.
+--   A raw HTML block starts with a block-level HTML tag (opening or
+--   closing), or a comment start `<!--` or end `-->`, and goes until
+--   the next blank line.  The whole block is included as raw HTML.
+--   No attempt is made to parse balanced tags.  This means that
+--   in the following, the asterisks are literal asterisks:
+--
+--       <div>
+--       *hello*
+--       </div>
+--
+--  while in the following, the asterisks are interpreted as markdown
+--  emphasis:
+--
+--      <div>
+--
+--      *hello*
+--
+--      </div>
+--
+--  In the first example, we have a single raw HTML block; in the second,
+--  we have two raw HTML blocks with an intervening paragraph.  This system
+--  provides flexibility to authors to use enclose markdown sections
+--  in html block-level tags if they wish, while also allowing them
+--  to include verbatim HTML blocks (taking care that the don't include
+--  any blank lines).
 
 module Markdown (parseMarkdown, renderBlocks) where
 import Prelude hiding (takeWhile)
@@ -438,10 +465,12 @@ codeFenceParserLine = do
 -- Scan the start of an HTML block:  either an HTML tag or an
 -- HTML comment, with no indentation.
 scanHtmlBlockStart :: Scanner
-scanHtmlBlockStart = ((pHtmlTag >>= guard . f . fst) <|> (() <$ string "<!--"))
+scanHtmlBlockStart = (   (pHtmlTag >>= guard . f . fst)
+                     <|> (() <$ string "<!--")
+                     <|> (() <$ string "-->" ))
   where f (Opening name) = name `Set.member` blockHtmlTags
         f (SelfClosing name) = name `Set.member` blockHtmlTags
-        f _ = False
+        f (Closing name) = name `Set.member` blockHtmlTags
 
 -- Scan the start of a list. If the parameter is Nothing, allow
 -- any bullet or list number marker indented no more than 3 spaces.
@@ -963,49 +992,8 @@ blockHtmlTags = Set.fromList
 -- Markdown.pl didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
-  st <- get  -- store state so we can backtrack
   lns <- withLineScanner (nfb scanBlankline) getLines
-  case parseOnly (pHtmlBlock <* scanBlankline <* endOfInput)
-       $ joinLines (ln:lns) of
-       Left _  -> put st >> addTextLine ln >> advance >> parseLines True Nothing
-       Right r -> return r
-
-pHtmlBlock :: Parser Blocks
-pHtmlBlock = singleton . HtmlBlock <$>
-  (pInBalancedTags Nothing <|> pHtmlComment <|> pUnbalancedBlockTag)
-
--- Parse content in balanced tags. If the parameter is
--- Just (tagtype, tag), then we don't try to parse the
--- opening tag, and assume that it has been parsed as
--- specified. Otherwise, we parse the opening tag too.
-pInBalancedTags :: Maybe (HtmlTagType, Text) -> Parser Text
-pInBalancedTags mbtag = do
-  (tagtype, opener) <- maybe pHtmlTag return mbtag
-  case tagtype of
-       SelfClosing _ -> return opener
-       Closing _     -> mzero
-       Opening name  -> (opener <>) <$> getRest name
-  where getRest name = do
-          nontag <- takeWhile (/='<')
-          (tagtype', x') <- pHtmlTag
-          case tagtype' of
-               Closing n | n == name -> do
-                 return $ nontag <> x'
-               Opening n | n == name -> do
-                 chunk <- pInBalancedTags (Just (tagtype',x'))
-                 rest <- getRest name
-                 return $ nontag <> chunk <> rest
-               _  -> ((nontag <> x') <>) <$> getRest name
-
--- We allow <hr> and <br> unclosed, as this is common.
--- Other cases like this?
-pUnbalancedBlockTag :: Parser Text
-pUnbalancedBlockTag = do
-  (tagtype, x) <- pHtmlTag
-  case tagtype of
-       Opening "hr" -> return x
-       Opening "br" -> return x
-       _            -> mzero
+  return $ singleton $ HtmlBlock $ joinLines $ map T.stripEnd (ln:lns)
 
 -- Parse a text into inlines, resolving reference links
 -- using the reference map.
