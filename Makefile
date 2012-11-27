@@ -1,9 +1,11 @@
+PROG ?= bin/markdown
+
 bin/markdown: bin/markdown.hs Markdown.hs
 	ghc -Wall -fno-warn-unused-do-bind --make ${GHCOPTS} -o $@ $<
 
 .PHONY: clean test prof opt bench
 
-test: bin/markdown
+test: $(PROG)
 	make -C tests --quiet clean all
 
 prof: bin/markdown-prof
