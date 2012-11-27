@@ -67,6 +67,16 @@
 --
 --       - two
 --
+-- * Two blank lines breaks out of a list.  This allows you to
+--   have consecutive lists:
+--
+--       - one
+--
+--       - two
+--
+--
+--       - one (new list)
+--
 -- * Block elements inside list items need not be indented four
 --   spaces.  If they are indented beyond the bullet or numerical
 --   list marker and a following space, they will be considered
@@ -609,6 +619,7 @@ parseLines continuation mbFirstLine = do
 
       where tryScanners :: [(Scanner, Text -> Text -> BlockParser Blocks)]
                         -> Text -> BlockParser Blocks
+            tryScanners _ ln | isEmptyLine ln = handleBlankLine
             tryScanners [] ln
                | mbFirstLine == Nothing && fmap isSetextLine
                   (applyScanners bscanners nextLine) == Just True  = do
@@ -628,8 +639,7 @@ parseLines continuation mbFirstLine = do
                     Nothing  -> tryScanners rest ln
             scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
             scannerPairs = [
-                (scanBlankline, \_ _ -> empty <$ advance)
-              , (scanBlockquoteStart, blockquoteParser)
+                (scanBlockquoteStart, blockquoteParser)
               , (scanIndentSpace, indentedCodeBlockParser)
               , (scanAtxHeaderStart, atxHeaderParser)
               , (scanCodeFenceLine, codeFenceParser)
@@ -640,13 +650,25 @@ parseLines continuation mbFirstLine = do
             isSetextLine  x = not (T.null x) &&
                                (T.all (=='=') x || T.all (=='-') x)
 
+handleBlankLine :: BlockParser Blocks
+handleBlankLine = do
+  advance
+  mblns <- peekTwoLines
+  bscanners <- gets blockScanners
+  tls <- popTextLines
+  if null bscanners -- parsing at outer level, just skip blanks
+     then (tls <>) <$> parseLines False Nothing
+     else -- in container, two blanks exits container
+          case mblns >>= applyScanners bscanners . fst of
+             Just l | isEmptyLine l -> return tls
+             _                      -> (tls <>) <$> parseLines False Nothing
 
 parseTextLine :: Text -> BlockParser Blocks
 parseTextLine thisLine = do
     line_scanners <- gets lineScanners
     case applyScanners line_scanners thisLine of
           Just x
-            | isEmptyLine x -> advance >> popTextLines
+            | isEmptyLine x -> popTextLines
             | otherwise -> addTextLine x >> advance >> parseLines True Nothing
           Nothing -> popTextLines
 
