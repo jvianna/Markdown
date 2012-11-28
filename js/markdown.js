@@ -23,6 +23,7 @@ function parserState(str) {
     var blockScanners = [];
     var lineScanners = [];
     var linkReferences = {};
+    var textLines = [];
     function normalizeLabel(str) {
 	return str.replace(/[\n ]+/g,' ').toUpperCase();
     };
@@ -65,6 +66,13 @@ function parserState(str) {
 	     lookupLinkReference : function(label) {
 		 return linkReferences[normalizeLabel(label)];
              },
+             addTextLine : function(str) {
+                 textLines.push(str);
+                 return true;
+             },
+             popTextLines : function() {
+		 return { t:'Para', v: [{t: 'Markdown',v: textLines.join('\n')}]};
+	     }
     }
 }
 
@@ -77,16 +85,37 @@ scanBlankline = /^ *$/;
 scanSpace = /^ /;
 scanSpaces = /^ */;
 
+function applyScanners(scanners, str) {
+    var i;
+    var s = str;
+    for (i in scanners) {
+	var res = scanners[i].exec(s);
+	if (res) {
+	    s = s.slice(res[0].length);
+	} else {
+	    return null;
+	};
+    };
+    return s; // should be the remainder of the string
+}
 
+assert.equal(applyScanners([scanBlockquoteStart],"> hi"), "hi");
+assert.equal(applyScanners([scanBlockquoteStart,scanBlockquoteStart]," >> hi"), "hi");
 
 function parseMarkdown(inputString) {
     var state = parserState(inputString);
     var next;
     var xs = [];
     var more = true;
+    var continuation = false;
     while (more) {
+	var bscanners = state.blockScanners();
 	var lns = state.peekLines();
-	xs.push({t: 'Markdown', v: lns[0]});
+	var thisLine = lns[0];
+	var nextLine = lns[1] || "";
+	// apply block scanners to thisLine
+
+	xs.push({t: 'Markdown', v: thisLine});
 	more = state.advance();
     }
     return([{t: 'Para', v: xs}]);
