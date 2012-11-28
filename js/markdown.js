@@ -60,7 +60,10 @@ function parserState(str) {
 		 return lineScanners.pop();
 	     },
 	     addLinkReference : function(label, url, title) {
-		 linkReferences[normalizeLabel(label)] = { url: url, title: title };
+		 linkReferences[normalizeLabel(label)] =
+                   { url: url,
+                     title: title
+                   };
 		 return true;
 	     },
 	     lookupLinkReference : function(label) {
@@ -71,7 +74,15 @@ function parserState(str) {
                  return true;
              },
              popTextLines : function() {
-		 return { t:'Para', v: [{t: 'Markdown',v: textLines.join('\n')}]};
+                 var res = textLines.join('\n');
+                 textLines = [];
+                 if (reEmpty.test(res)){
+                   return null
+                  } else {
+   		   return { t:'Para',
+                            v: [{t: 'Markdown',v: res}]
+                            };
+                  };
 	     }
     }
 }
@@ -84,6 +95,8 @@ scanBlockquoteStart = /^ {0,3}> ?/;
 scanBlankline = /^ *$/;
 scanSpace = /^ /;
 scanSpaces = /^ */;
+
+reEmpty = new RegExp('^[ \n\t\r]*$');
 
 function applyScanners(scanners, str) {
     var i;
@@ -114,13 +127,17 @@ function parseLines(state, continuation, line){
 	var nextLine = lns[1] || "";
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
-	    return state.popTextLines();
+	    break;
 	} else {
 	    state.addTextLine(remainder);
 	};
 	more = state.advance();
     }
-    return state.popTextLines();
+    var lastpara = state.popTextLines();
+    if (lastpara){
+      xs.push(lastpara);
+    };
+    return xs;
 };
 
 function parseMarkdown(inputString) {
