@@ -74,11 +74,15 @@ function parserState(str) {
                  return true;
              },
              popTextLines : function() {
-                 var res = textLines.join('\n');
-                 textLines = [];
-   		 return { t:'Para',
-                          v: [{t: 'Markdown',v: res}]
-                        };
+                 if (textLines.length == 0) {
+                   return null;
+                 } else {
+                   var res = textLines.join('\n');
+                   textLines = [];
+     	  	   return { t:'Para',
+                            v: [{t: 'Markdown',v: res}]
+                          };
+                 };
 	     }
     }
 }
