@@ -129,6 +129,7 @@ function parseLines(state, continuation, line){
 	var nextLine = lns[1] || "";
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
+            // TODO - why did we need continuation again?
 	    if (continuation) {
               continuation = parseTextLine(state, thisLine);
             };
@@ -176,8 +177,14 @@ function parseTextLine(state, str) {
   var remainder = applyScanners(lscanners, str);
   if (remainder == null || scanBlankline.test(remainder)) {
     return false;
-  } else {
-    state.addTextLine(str);
+  } else { // TODO add this part to Markdown.hs
+    for (i in scanners) {
+      var s = scanners[i];
+      if (s.scanner.test(remainder)) {
+        return false;
+      };
+    }
+    state.addTextLine(remainder);
     return true;
   };
 }
