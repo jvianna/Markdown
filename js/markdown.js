@@ -125,12 +125,6 @@ function parseLines(state, continuation, line){
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
 	    if (continuation) {
-              // continuations are just paragraph lines
-              for (s in scanners) {
-                  if (scannerPairs[s].scanner.test(thisLine)) {
-                    break;  // we've reached a new kind of block
-                  }
-              };
               continuation = parseTextLine(thisLine);
             };
             break;
