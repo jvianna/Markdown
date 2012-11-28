@@ -128,6 +128,8 @@ function parseLines(state, continuation, line){
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
 	    if (continuation) {
+              // TODO - try block begin scanners on thisLine, if
+              // no match, then... otherwise break.
               continuation = parseTextLine(thisLine);
             };
             break;
