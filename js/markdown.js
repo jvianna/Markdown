@@ -158,6 +158,24 @@ function parseLines(state, continuation, line){
     return xs;
 };
 
+function getLines(state, ln) {
+  state.advance()
+  var lscanners = state.lineScanners()
+  var lns = [ln];
+  var more = state.peekLines();
+  while (more.length > 0) {
+    var res = applyScanners(lscanners, more[0]);
+    if (res) {
+      lns.push(res);
+      state.advance();
+      more = state.peekLines();
+    } else {
+      break;
+    }
+  }
+  return lns;
+}
+
 var scanners = [
   { scanner: scanBlockquoteStart,
     parser:  pBlockquote }
