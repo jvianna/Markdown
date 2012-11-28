@@ -99,12 +99,11 @@ function applyScanners(scanners, str) {
     return s; // should be the remainder of the string
 }
 
+assert.equal(applyScanners([],"hi"),"hi");
 assert.equal(applyScanners([scanBlockquoteStart],"> hi"), "hi");
 assert.equal(applyScanners([scanBlockquoteStart,scanBlockquoteStart]," >> hi"), "hi");
 
-function parseMarkdown(inputString) {
-    var state = parserState(inputString);
-    var next;
+function parseLines(state, continuation, line){
     var xs = [];
     var more = true;
     var continuation = false;
@@ -113,12 +112,21 @@ function parseMarkdown(inputString) {
 	var lns = state.peekLines();
 	var thisLine = lns[0];
 	var nextLine = lns[1] || "";
-	// apply block scanners to thisLine
-
-	xs.push({t: 'Markdown', v: thisLine});
+	var remainder = applyScanners(bscanners, thisLine);
+	if (remainder == null) {
+	    return state.popTextLines();
+	} else {
+	    state.addTextLine(remainder);
+	};
 	more = state.advance();
     }
-    return([{t: 'Para', v: xs}]);
+    return state.popTextLines();
+};
+
+function parseMarkdown(inputString) {
+    var state = parserState(inputString);
+    // state.pushBlockScanner(scanBlockquoteStart);
+    return parseLines(state, false);
 }
 
 // main program
