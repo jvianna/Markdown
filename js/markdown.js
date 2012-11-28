@@ -76,13 +76,9 @@ function parserState(str) {
              popTextLines : function() {
                  var res = textLines.join('\n');
                  textLines = [];
-                 if (reEmpty.test(res)){
-                   return null
-                  } else {
-   		   return { t:'Para',
-                            v: [{t: 'Markdown',v: res}]
-                            };
-                  };
+   		 return { t:'Para',
+                          v: [{t: 'Markdown',v: res}]
+                        };
 	     }
     }
 }
@@ -92,6 +88,7 @@ function parserState(str) {
 scanNonidentSpaces = new RegExp('^ {0,3}');
 scanIndentSpace = new RegExp('^    ');
 scanBlockquoteStart = new RegExp('^ {0,3}> ?');
+optScanBlockquoteStart = new RegExp('^( {0,3}> ?)?');
 scanBlankline = new RegExp('^ *$');
 scanSpace = new RegExp('^ ');
 scanSpaces = new RegExp('^ *');
@@ -128,12 +125,18 @@ function parseLines(state, continuation, line){
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
 	    if (continuation) {
-              // TODO - try block begin scanners on thisLine, if
-              // no match, then... otherwise break.
+              // continuations are just paragraph lines
+              for (s in scanners) {
+                  if (scannerPairs[s].scanner.test(thisLine)) {
+                    break;  // we've reached a new kind of block
+                  }
+              };
               continuation = parseTextLine(thisLine);
             };
             break;
 	} else {
+            // TODO - here is where we check for new blocks
+            // this is just a placeholder/fallback.
 	    parseTextLine(state, remainder);
 	};
 	more = state.advance();
@@ -145,10 +148,24 @@ function parseLines(state, continuation, line){
     return xs;
 };
 
+var scanners = [
+  { scanner: scanBlockquoteStart,
+    parser:  pBlockquote }
+];
+
+function pBlockquote(state) {
+  pushBlockScanner(scanBlockquoteStart);
+  pushLineScanner(optScanBlockquoteStart);
+  var res = parseLines(state);
+  popLineScanner();
+  popBlockScanner();
+  return res;
+};
+
 function parseTextLine(state, str) {
   var lscanners = state.lineScanners();
   var remainder = applyScanners(lscanners, str);
-  if (remainder == null || reEmpty.test(remainder)) {
+  if (remainder == null || scanBlankline.test(remainder)) {
     return false;
   } else {
     state.addTextLine(str);
