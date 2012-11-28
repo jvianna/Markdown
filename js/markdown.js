@@ -89,12 +89,12 @@ function parserState(str) {
 
 // scanners
 
-scanNonidentSpaces = /^ {0,3}/;
-scanIndentSpace = /^    /;
-scanBlockquoteStart = /^ {0,3}> ?/;
-scanBlankline = /^ *$/;
-scanSpace = /^ /;
-scanSpaces = /^ */;
+scanNonidentSpaces = new RegExp('^ {0,3}');
+scanIndentSpace = new RegExp('^    ');
+scanBlockquoteStart = new RegExp('^ {0,3}> ?');
+scanBlankline = new RegExp('^ *$');
+scanSpace = new RegExp('^ ');
+scanSpaces = new RegExp('^ *');
 
 reEmpty = new RegExp('^[ \n\t\r]*$');
 
@@ -127,9 +127,12 @@ function parseLines(state, continuation, line){
 	var nextLine = lns[1] || "";
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
-	    break;
+	    if (continuation) {
+              continuation = parseTextLine(thisLine);
+            };
+            break;
 	} else {
-	    state.addTextLine(remainder);
+	    parseTextLine(state, remainder);
 	};
 	more = state.advance();
     }
@@ -139,6 +142,17 @@ function parseLines(state, continuation, line){
     };
     return xs;
 };
+
+function parseTextLine(state, str) {
+  var lscanners = state.lineScanners();
+  var remainder = applyScanners(lscanners, str);
+  if (remainder == null || reEmpty.test(remainder)) {
+    return false;
+  } else {
+    state.addTextLine(str);
+    return true;
+  };
+}
 
 function parseMarkdown(inputString) {
     var state = parserState(inputString);
