@@ -117,6 +117,7 @@ function parseLines(state, continuation, line){
     var xs = [];
     var more = true;
     var continuation = false;
+    var last;
     while (more) {
 	var bscanners = state.blockScanners();
 	var lns = state.peekLines();
@@ -125,20 +126,30 @@ function parseLines(state, continuation, line){
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
 	    if (continuation) {
-              continuation = parseTextLine(thisLine);
+              continuation = parseTextLine(state, thisLine);
             };
             break;
 	} else {
-            // TODO - here is where we check for new blocks
-            // this is just a placeholder/fallback.
-	    parseTextLine(state, remainder);
+            // here is where we check for new blocks
+            for (i in scanners) {
+              var s = scanners[i];
+              if (s.scanner.test(remainder)) {
+                last = state.popTextLines();
+                if (last) { xs.push(last); }
+                xs.push(s.parser(state, remainder));
+              } else if (parseTextLine(state, remainder)) {
+                continuation = true;
+                break;
+              } else {
+                last = state.popTextLines();
+                if (last) { xs.push(last); }
+              };
+            };
 	};
 	more = state.advance();
     }
-    var lastpara = state.popTextLines();
-    if (lastpara){
-      xs.push(lastpara);
-    };
+    last = state.popTextLines();
+    if (last){ xs.push(last); };
     return xs;
 };
 
@@ -148,12 +159,12 @@ var scanners = [
 ];
 
 function pBlockquote(state) {
-  pushBlockScanner(scanBlockquoteStart);
-  pushLineScanner(optScanBlockquoteStart);
+  state.pushBlockScanner(scanBlockquoteStart);
+  state.pushLineScanner(optScanBlockquoteStart);
   var res = parseLines(state);
-  popLineScanner();
-  popBlockScanner();
-  return res;
+  state.popLineScanner();
+  state.popBlockScanner();
+  return { t: 'Blockquote', v: res };
 };
 
 function parseTextLine(state, str) {
