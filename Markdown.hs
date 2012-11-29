@@ -635,49 +635,60 @@ parseLines continuation mbFirstLine = do
   mblns <- peekTwoLines
   bscanners <- gets blockScanners
   case mblns of
-    Nothing  -> popTextLines
+    Nothing  -> popTextLines   -- no more lines of text!
+                               -- return paragraph containing the
+                               -- accumulated textLines
     Just (thisLine, nextLine) ->
+      -- apply the block scanners to the first line (thisLine)
       case mbFirstLine `mplus` applyScanners bscanners thisLine of
-           Just thisLine' -> tryScanners scannerPairs thisLine'
-           Nothing -> if continuation
-                         then case parseOnly (msum $ map fst scannerPairs)
-                                   thisLine of
-                                    Right _ -> popTextLines
-                                    Left _  -> parseTextLine thisLine
-                         else popTextLines
+           Just thisLine' -> -- they match!  thisLine' is the remainder.
+                             -- so this is the beginning of a new block.
+                             -- call tryScanners to figure out what kind
+                             -- and parse accordingly.
+                             tryScanners scannerPairs thisLine'
+           Nothing ->  -- they don't match.  either this is the end of
+                       -- a block container (e.g. blockquote context)
+                       -- or it is a lazy text line.
+                       if continuation
+                         then -- parse the lazy text line
+                              parseTextLine thisLine
+                         else -- return paragraph with accumulated text lines
+                              popTextLines
 
       where tryScanners :: [(Scanner, Text -> Text -> BlockParser Blocks)]
                         -> Text -> BlockParser Blocks
             tryScanners _ ln | isEmptyLine ln = handleBlankLine
-            tryScanners [] ln
+            tryScanners [] ln  -- fallback if none of the scanners match
                | mbFirstLine == Nothing && fmap isSetextLine
                   (applyScanners bscanners nextLine) == Just True  = do
+                     -- we have a setext header
                      tls <- popTextLines
                      let lev = if T.any (=='=') nextLine then 1 else 2
                      next <- setextHeaderParser lev ln ln
                      rest <- parseLines False Nothing
                      return $ tls <> next <> rest
-               | otherwise = parseTextLine ln
+               | otherwise = parseTextLine ln  -- regular text line
             tryScanners ((s,p):rest) ln =
                case applyScanners [s] ln of
                     Just ln' -> do
-                      tls <- popTextLines
-                      next <- p ln ln'
-                      rest' <- parseLines False Nothing
+                      tls <- popTextLines  -- paragraph with accumulated text lines
+                      next <- p ln ln'     -- this block
+                      rest' <- parseLines False Nothing  -- rest of blocks
                       return $ tls <> next <> rest'
                     Nothing  -> tryScanners rest ln
-            scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
-            scannerPairs = [
-                (scanBlockquoteStart, blockquoteParser)
-              , (scanIndentSpace, indentedCodeBlockParser)
-              , (scanAtxHeaderStart, atxHeaderParser)
-              , (scanCodeFenceLine, codeFenceParser)
-              , (scanReference, referenceParser)
-              , (scanHRuleLine, hruleParser)
-              , (scanNonindentSpaces >> scanListStart Nothing, listParser)
-              , (scanHtmlBlockStart, htmlBlockParser) ]
             isSetextLine  x = not (T.null x) &&
                                (T.all (=='=') x || T.all (=='-') x)
+
+scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
+scannerPairs = [
+    (scanBlockquoteStart, blockquoteParser)
+  , (scanIndentSpace, indentedCodeBlockParser)
+  , (scanAtxHeaderStart, atxHeaderParser)
+  , (scanCodeFenceLine, codeFenceParser)
+  , (scanReference, referenceParser)
+  , (scanHRuleLine, hruleParser)
+  , (scanNonindentSpaces >> scanListStart Nothing, listParser)
+  , (scanHtmlBlockStart, htmlBlockParser) ]
 
 handleBlankLine :: BlockParser Blocks
 handleBlankLine = do
@@ -696,10 +707,16 @@ parseTextLine :: Text -> BlockParser Blocks
 parseTextLine thisLine = do
     line_scanners <- gets lineScanners
     case applyScanners line_scanners thisLine of
-          Just x
-            | isEmptyLine x -> popTextLines
-            | otherwise -> addTextLine x >> advance >> parseLines True Nothing
-          Nothing -> popTextLines
+          Just x  -- the line scanners match, x is the remainder
+            | isEmptyLine x -> popTextLines  -- stop and return paragraph
+            | otherwise ->  -- check if line could be start of new block
+              case parseOnly (msum $ map fst scannerPairs) x of
+                   Right _ -> popTextLines -- start of new block - return paragraph
+                   Left _  -> do
+                     addTextLine x -- add line to textLines buffer
+                     advance       -- move forward
+                     parseLines True Nothing  -- continue parsing
+          Nothing -> popTextLines  -- return paragraph
 
 getLines :: BlockParser [Text]
 getLines = do

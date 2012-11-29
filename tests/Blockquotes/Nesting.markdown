@@ -11,11 +11,12 @@ These are all equivalent:
 > > nested
 blockquote
 
-These are not:
 
 > > nested
 > blockquote
 
+
+This is not:
 
 > nested
 > > blockquote
