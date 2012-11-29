@@ -129,7 +129,6 @@ function parseLines(state, continuation, line){
 	var nextLine = lns[1] || "";
 	var remainder = applyScanners(bscanners, thisLine);
 	if (remainder == null) {
-            // TODO - why did we need continuation again?
 	    if (continuation) {
               continuation = parseTextLine(state, thisLine);
             };
