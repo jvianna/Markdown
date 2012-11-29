@@ -126,6 +126,7 @@ function Markdown(input){
 	    if (remainder == null) {
 		if (continuation) {
 		    continuation = this.parseTextLine(this.thisLine);
+		    more = this.advance();
 		} else {
 		    break;
 		}
@@ -144,16 +145,18 @@ function Markdown(input){
 		    if (scanBlankline.test(remainder)) {
 			var nxt = applyScanners(this.blockScanners, this.nextLine);
 			if (nxt != null && scanBlankline.test(nxt) && this.blockScanners.length > 0) {
+			    more = this.advance();
 			    break;
 			} else {
 			    this.popTextLines(blocks);
+			    more = this.advance();
 			}
 		    } else {
 			continuation = this.parseTextLine(remainder);
+			more = this.advance();
 		    }
 		}
 	    };
-	    more = this.advance();
 	}
 	this.popTextLines(blocks);
 	return blocks;
