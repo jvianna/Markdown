@@ -640,10 +640,7 @@ parseLines continuation mbFirstLine = do
       case mbFirstLine `mplus` applyScanners bscanners thisLine of
            Just thisLine' -> tryScanners scannerPairs thisLine'
            Nothing -> if continuation
-                         then case parseOnly (msum $ map fst scannerPairs)
-                                   thisLine of
-                                    Right _ -> popTextLines
-                                    Left _  -> parseTextLine thisLine
+                         then parseTextLine thisLine
                          else popTextLines
 
       where tryScanners :: [(Scanner, Text -> Text -> BlockParser Blocks)]
@@ -666,18 +663,19 @@ parseLines continuation mbFirstLine = do
                       rest' <- parseLines False Nothing
                       return $ tls <> next <> rest'
                     Nothing  -> tryScanners rest ln
-            scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
-            scannerPairs = [
-                (scanBlockquoteStart, blockquoteParser)
-              , (scanIndentSpace, indentedCodeBlockParser)
-              , (scanAtxHeaderStart, atxHeaderParser)
-              , (scanCodeFenceLine, codeFenceParser)
-              , (scanReference, referenceParser)
-              , (scanHRuleLine, hruleParser)
-              , (scanNonindentSpaces >> scanListStart Nothing, listParser)
-              , (scanHtmlBlockStart, htmlBlockParser) ]
             isSetextLine  x = not (T.null x) &&
                                (T.all (=='=') x || T.all (=='-') x)
+
+scannerPairs :: [(Scanner, Text -> Text -> BlockParser Blocks)]
+scannerPairs = [
+    (scanBlockquoteStart, blockquoteParser)
+  , (scanIndentSpace, indentedCodeBlockParser)
+  , (scanAtxHeaderStart, atxHeaderParser)
+  , (scanCodeFenceLine, codeFenceParser)
+  , (scanReference, referenceParser)
+  , (scanHRuleLine, hruleParser)
+  , (scanNonindentSpaces >> scanListStart Nothing, listParser)
+  , (scanHtmlBlockStart, htmlBlockParser) ]
 
 handleBlankLine :: BlockParser Blocks
 handleBlankLine = do
@@ -698,7 +696,10 @@ parseTextLine thisLine = do
     case applyScanners line_scanners thisLine of
           Just x
             | isEmptyLine x -> popTextLines
-            | otherwise -> addTextLine x >> advance >> parseLines True Nothing
+            | otherwise ->
+              case parseOnly (msum $ map fst scannerPairs) x of
+                   Right _ -> popTextLines -- start of new block
+                   Left _  -> addTextLine x >> advance >> parseLines True Nothing
           Nothing -> popTextLines
 
 getLines :: BlockParser [Text]
