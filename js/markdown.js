@@ -125,6 +125,68 @@ function Markdown(input){
 	return(util.inspect(blocks,false,null));
     }
 
+    markdown.toHtml = function() {
+	var blocks = this.parseBlocks();
+	this.processBlocks(blocks);
+	return blocksToHtml(blocks);
+    }
+
+    var escapeHtml = function(x) {
+	return x.replace(/[&<>'"]/,
+			 function(c){
+			     if (c=='&') {
+				 return "&amp;";
+			     } else if (c=='<') {
+				 return "&lt;";
+			     } else if (c=='>') {
+				 return "&gt;";
+			     } else if (c=='\'') {
+				 return "&#39;";
+			     } else if (c=='"') {
+				 return "&quot;";
+			     } else {
+				 return c;
+			     }
+			 });
+    }
+
+    var blocksToHtml = function(blocks) {
+	var xs = [];
+	for (i in blocks) {
+	    var block = blocks[i];
+	    switch (block.t){
+	    case 'Para':
+		xs.push("<p>" + inlinesToHtml(block.v) + "</p>");
+		break;
+	    case 'Blockquote':
+		xs.push("<blockquote>\n" + blocksToHtml(block.v) + "\n</blockquote>");
+		break;
+	    case 'CodeBlock':
+		xs.push("<pre><code>" + escapeHtml(block.v) + "</code></pre>");
+		break;
+	    default:
+	    }
+	}
+	return xs.join("\n");
+    }
+
+    var inlinesToHtml = function(inlines) {
+	var xs = [];
+	for (i in inlines) {
+	    var inline = inlines[i];
+	    switch (inline.t){
+	    case 'Str':
+		xs.push(escapeHtml(inline.v));
+		break;
+	    case 'Space':
+		xs.push(" ");
+		break;
+	    default:
+	    }
+	}
+	return xs.join("\n");
+    }
+
     // Modifies blocks in place, parsing 'raw' strings into
     // arrays of inlines and resolving references.
     markdown.processBlocks = function(blocks) {
@@ -302,5 +364,5 @@ function Markdown(input){
 var inputFile = process.argv[2] || '/dev/stdin';
 var contents = fs.readFileSync(inputFile,'utf8');
 var markdown = new Markdown(contents);
-console.log(markdown.showAST());
+console.log(markdown.toHtml());
 
