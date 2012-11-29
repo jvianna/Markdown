@@ -602,13 +602,13 @@ withBlockScanner scanner parser = do
   return result
 
 
-peekTwoLines :: BlockParser (Maybe (Text, Text))
+peekTwoLines :: BlockParser (Maybe Text, Maybe Text)
 peekTwoLines = do
   xs <- gets inputLines
   case xs of
-       []      -> return Nothing
-       (x:[])  -> return (Just (x,""))
-       (x:y:_) -> return (Just (x,y))
+       []      -> return (Nothing, Nothing)
+       (x:[])  -> return (Just x, Nothing)
+       (x:y:_) -> return (Just x, Just y)
 
 advance :: BlockParser ()
 advance = do
@@ -632,13 +632,13 @@ popTextLines = do
 
 parseLines :: Bool -> Maybe Text -> BlockParser Blocks
 parseLines continuation mbFirstLine = do
-  mblns <- peekTwoLines
+  (mbThis, mbNext) <- peekTwoLines
   bscanners <- gets blockScanners
-  case mblns of
+  case mbThis of
     Nothing  -> popTextLines   -- no more lines of text!
                                -- return paragraph containing the
                                -- accumulated textLines
-    Just (thisLine, nextLine) ->
+    Just thisLine ->
       -- apply the block scanners to the first line (thisLine)
       case mbFirstLine `mplus` applyScanners bscanners thisLine of
            Just thisLine' -> -- they match!  thisLine' is the remainder.
@@ -660,10 +660,10 @@ parseLines continuation mbFirstLine = do
             tryScanners _ ln | isEmptyLine ln = handleBlankLine
             tryScanners [] ln  -- fallback if none of the scanners match
                | mbFirstLine == Nothing && fmap isSetextLine
-                  (applyScanners bscanners nextLine) == Just True  = do
+                  (mbNext >>= applyScanners bscanners) == Just True  = do
                      -- we have a setext header
                      tls <- popTextLines
-                     let lev = if T.any (=='=') nextLine then 1 else 2
+                     let lev = if T.any (=='=') (maybe "" id mbNext) then 1 else 2
                      next <- setextHeaderParser lev ln ln
                      rest <- parseLines False Nothing
                      return $ tls <> next <> rest
@@ -693,13 +693,13 @@ scannerPairs = [
 handleBlankLine :: BlockParser Blocks
 handleBlankLine = do
   advance
-  mblns <- peekTwoLines
+  (mbFirst,_) <- peekTwoLines
   bscanners <- gets blockScanners
   tls <- popTextLines
   if null bscanners -- parsing at outer level, just skip blanks
      then (tls <>) <$> parseLines False Nothing
      else -- in container, two blanks exits container
-          case mblns >>= applyScanners bscanners . fst of
+          case mbFirst >>= applyScanners bscanners of
              Just l | isEmptyLine l -> return tls
              _                      -> (tls <>) <$> parseLines False Nothing
 
@@ -718,15 +718,12 @@ parseTextLine thisLine = do
                      parseLines True Nothing  -- continue parsing
           Nothing -> popTextLines  -- return paragraph
 
-getLines :: BlockParser [Text]
-getLines = do
-  advance
-  line_scanners <- gets lineScanners
-  mbpeek <- peekTwoLines
-  case mbpeek of
-       Just (l,_) -> case applyScanners line_scanners l of
-                     Just l' -> (l':) <$> getLines
-                     Nothing -> return []
+getLines :: (ParserState -> [Scanner]) -> BlockParser [Text]
+getLines scannerType = do
+  scanners <- gets scannerType
+  (mbFirst, _) <- peekTwoLines
+  case mbFirst >>= applyScanners scanners of
+       Just l' -> advance >> (l':) <$> getLines scannerType
        Nothing -> return []
 
 -- Specific block parsers.  These take two parameters. The first
@@ -744,7 +741,8 @@ blockquoteParser _ _ = singleton . Blockquote <$>
 -- Parse an indented code block.
 indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
 indentedCodeBlockParser _ ln = do
-  lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
+  advance
+  lns <- withBlockScanner (scanIndentSpace <|> scanBlankline) $ getLines blockScanners
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
 
@@ -755,9 +753,15 @@ codeFenceParser ln _ = do
   case parseOnly codeFenceParserLine ln of
        Left _  -> error "Could not parse codeFenceParserLine" -- should not happen
        Right (fence, rawattr) -> do
-         lns <- withLineScanner (nfb $ string fence) $ getLines
-         advance -- consume the fence at the end
-         return $ singleton . CodeBlock (parseCodeAttributes rawattr) . T.unlines $ lns
+         advance -- consume fence
+         lns <- withBlockScanner (nfb $ string fence) $ getLines blockScanners
+         (mbFirst, _) <- peekTwoLines
+         bscanners <- gets blockScanners
+         case mbFirst >>= applyScanners bscanners of
+              Just _  -> advance -- consume fence at end
+              Nothing -> return () -- end of doc or container, treat whole as code block
+         return $ singleton $ CodeBlock (parseCodeAttributes rawattr)
+                $ T.unlines $ lns
 
 -- Parse whatever remains on a fenced code block line after the fence.
 -- The first word is the language, the rest is currently ignored,
@@ -796,7 +800,9 @@ hruleParser _ _ = (singleton HRule) <$ advance
 -- and update the reference map in state.
 referenceParser :: Text -> Text -> BlockParser Blocks
 referenceParser first _ = do
-  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
+  advance -- consume first line
+  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference)
+          $ getLines lineScanners
   let raw = joinLines (first:rest)
   case parseOnly pReference raw of
        Left  _               -> return $ singleton $ Para
@@ -911,24 +917,21 @@ listParser first first' = do
 listItemsParser :: Bool -> Scanner -> Scanner -> Scanner -> BlockParser [Blocks]
 listItemsParser isTight starter blockScanner lineScanner = do
   -- Get next line and chomp off list marker.
-  mbfirsttwo <- peekTwoLines
+  (mbFirst,_) <- peekTwoLines
   bscanners <- gets blockScanners
-  case mbfirsttwo of
-       Nothing    -> return []
-       Just (first,_) -> do
-         case applyScanners (bscanners ++ [starter]) first of
-              Nothing     -> return []
-              Just first' -> do
-                item <- withBlockScanner blockScanner
-                        $ withLineScanner lineScanner
-                        $ parseLines False $ Just first'
-                prev <- gets lastLine
-                rest <- case prev of
-                             -- We stop list parsing if we go from tight to loose:
-                             Just l | isEmptyLine l && isTight -> return []
-                             _  ->
-                              listItemsParser isTight starter blockScanner lineScanner
-                return (item:rest)
+  case mbFirst >>= applyScanners (bscanners ++ [starter]) of
+       Nothing     -> return []
+       Just first' -> do
+         item <- withBlockScanner blockScanner
+                 $ withLineScanner lineScanner
+                 $ parseLines False $ Just first'
+         prev <- gets lastLine
+         rest <- case prev of
+                      -- We stop list parsing if we go from tight to loose:
+                      Just l | isEmptyLine l && isTight -> return []
+                      _  ->
+                       listItemsParser isTight starter blockScanner lineScanner
+         return (item:rest)
 
 -- Parsers that recognize character escapes.
 
@@ -1009,7 +1012,8 @@ blockHtmlTags = Set.fromList
 -- Markdown.pl didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
-  lns <- withLineScanner (nfb scanBlankline) getLines
+  advance -- consume first line
+  lns <- withLineScanner (nfb scanBlankline) $ getLines lineScanners
   return $ singleton $ HtmlBlock $ joinLines $ map T.stripEnd (ln:lns)
 
 -- Parse a text into inlines, resolving reference links
