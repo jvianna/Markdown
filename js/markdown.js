@@ -194,7 +194,7 @@ function parseTextLine(state, str) {
   var remainder = applyScanners(lscanners, str);
   if (remainder == null || scanBlankline.test(remainder)) {
     return false;
-  } else { // TODO add this part to Markdown.hs
+  } else {
     for (i in scanners) {
       var s = scanners[i];
       if (s.scanner.test(remainder)) {
