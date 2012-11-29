@@ -2,7 +2,10 @@ var fs = require('fs');
 var assert = require('assert');
 var util = require('util');
 
-// partly based on the version here: http://stackoverflow.com/questions/7343796/markdown-showdown-bug-in-detab-regex
+// Utility functions
+
+// partly based on the version here:
+// http://stackoverflow.com/questions/7343796/markdown-showdown-bug-in-detab-regex
 function detab_line(text) {
     var spaces = ["    ", "   ", "  ", " "], skew = 0, v;
     return text.replace(/\t/g, function (match, offset) {
@@ -11,12 +14,78 @@ function detab_line(text) {
         return spaces[v];
     });
 }
+
 assert.equal(detab_line("\thi\tthere \tfriend"), "    hi  there   friend");
 
-// for now, just print ast
-function toHtml(x) {
-    return(util.inspect(x,false,null));
+// link labels are case-insensitive and collapse whitespace
+function normalizeLabel(str) {
+    return str.replace(/[\n ]+/g,' ').toUpperCase();
+};
+
+assert.equal(normalizeLabel("По\n оживлённым берегам"), normalizeLabel("ПО ОЖИВЛЁННЫМ БЕРЕГАМ"));
+
+function Markdown(input){
+
+    var markdown = new Object();
+
+    markdown.inputRemaining = input; // input string
+    markdown.blockScanners = [];
+    markdown.lineScanners = [];
+    markdown.linkReferences = {};
+    markdown.textLines = [];
+
+    markdown.peekLines = function() {
+        return this.inputRemaining.split(/\n/,2);
+    }
+
+    markdown.advance = function() {
+        var i = this.inputRemaining.indexOf('\n');
+        if (i == -1) {
+            return false;
+        } else {
+            this.inputRemaining = this.inputRemaining.slice(i + 1);
+            return true;
+        };
+    }
+
+    markdown.addLinkReference = function(label, url, title) {
+	this.linkReferences[normalizeLabel(label)] =
+            { url: url,
+              title: title
+            };
+	return true;
+    }
+
+    markdown.lookupLinkReference = function(label) {
+	return this.linkReferences[normalizeLabel(label)];
+    }
+
+    markdown.addTextLine = function(str) {
+        this.textLines.push(str);
+        return true;
+    }
+
+    markdown.popTextLines = function() {
+        if (textLines.length == 0) {
+            return null;
+        } else {
+            var res = textLines.join('\n');
+            textLines = [];
+     	    return { t:'Para',
+                     v: [{t: 'Markdown',v: res}]
+                   };
+        };
+    }
+
+    // for now, just print ast
+    markdown.toHtml = function(x) {
+	return(util.inspect(x,false,null));
+    }
+
+    return markdown;
 }
+
+
 
 function parserState(str) {
     var inputRemaining = str;
@@ -24,9 +93,6 @@ function parserState(str) {
     var lineScanners = [];
     var linkReferences = {};
     var textLines = [];
-    function normalizeLabel(str) {
-	return str.replace(/[\n ]+/g,' ').toUpperCase();
-    };
     return { peekLines : function() {
                  return inputRemaining.split(/\n/,2);
              },
@@ -215,10 +281,10 @@ function parseMarkdown(inputString) {
 // main program
 
 
-var inputFile = process.argv[2] || '/dev/stdin';
+// var inputFile = process.argv[2] || '/dev/stdin';
 
-var contents = fs.readFileSync(inputFile,'utf8');
+// var contents = fs.readFileSync(inputFile,'utf8');
 
-console.log(toHtml(parseMarkdown(contents)));
+// console.log(toHtml(parseMarkdown(contents)));
 
 
