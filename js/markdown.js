@@ -34,6 +34,7 @@ optScanBlockquoteStart = new RegExp('^( {0,3}> ?)?');
 scanBlankline = new RegExp('^ *$');
 scanSpace = new RegExp('^ ');
 scanSpaces = new RegExp('^ *');
+scanHrule = new RegExp('^ {0,3}(([*] *){3,}|(- *){3,}|(_ *){3,}) *$');
 
 function applyScanners(scanners, str) {
     var i;
@@ -211,7 +212,12 @@ function Markdown(input){
 	var rest = m.getLines(m.blockScanners);
    	var code = (t + "\n" + rest.join('\n')).replace(/\n*$/,'\n');
 	m.blockScanners.pop();
-	return { t: 'CodeBlock', attr: { codeLang: '' }, v: code }
+	return { t: 'CodeBlock', attr: { codeLang: '' }, v: code };
+    }
+
+    var pHrule = function(m) {
+	m.advance();
+	return { t: 'HRule' };
     }
 
     markdown.scanners = [
@@ -219,6 +225,8 @@ function Markdown(input){
 	  parser:  pBlockquote },
 	{ scanner: scanIndentSpace,
 	  parser:  pIndentedCodeBlock },
+	{ scanner: scanHrule,
+	  parser:  pHrule },
     ];
 
     return markdown;
