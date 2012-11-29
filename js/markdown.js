@@ -67,9 +67,14 @@ function Markdown(input){
     markdown.textLines = [];
 
     var firsttwo = input.split(/\n/,2);
+
+    // thisLine and nextLine are always strings; at the
+    // end of the document they become empty strings.
     markdown.thisLine = detab_line(firsttwo[0] || "");
     markdown.nextLine = detab_line(firsttwo[1] || "");
 
+    // returns true if it succeeded in advancing, false
+    // at end of document.
     markdown.advance = function() {
 	if (this.inputRemaining) {
 	    this.thisLine = this.nextLine;
@@ -104,6 +109,7 @@ function Markdown(input){
         return true;
     }
 
+    // empty the textLines buffer into a new paragraph.
     markdown.popTextLines = function(blocks) {
         if (this.textLines.length > 0) {
             var res = this.textLines.join('\n');
@@ -119,7 +125,8 @@ function Markdown(input){
 	return(util.inspect(blocks,false,null));
     }
 
-    // Modifies blocks in place.
+    // Modifies blocks in place, parsing 'raw' strings into
+    // arrays of inlines and resolving references.
     markdown.processBlocks = function(blocks) {
 	for (i in blocks) {
 	    var block = blocks[i];
@@ -138,6 +145,8 @@ function Markdown(input){
 	}
     }
 
+    // parse a string into an array of inline objects,
+    // resolving references.
     markdown.parseInlines = function(str) {
 	// for testing purposes
 	var inlines = [];
@@ -152,14 +161,21 @@ function Markdown(input){
 	return inlines;
     }
 
+    // reads lines and returns an array of block elements.
+    // stops when it can't parse any more blocks. this may
+    // be at the end of the document or at the end of a block
+    // container such as a blockquote or list item.
     markdown.parseBlocks = function() {
 	var blocks = [];
 	var more = true;
 	var last;
 	var continuation = false;
 	while (more) {
+	    // try applying the blockscanners to the first line.
 	    var remainder = applyScanners(this.blockScanners, this.thisLine);
 	    if (remainder == null) {
+		// failed:  we either have a lazy text continuation line
+		// or we're done.
 		if (continuation) {
 		    continuation = this.parseTextLine(this.thisLine);
 		    more = continuation && this.advance();
@@ -167,7 +183,7 @@ function Markdown(input){
 		    break;
 		}
 	    } else {
-		// here is where we check for new blocks
+		// success: see what kind of block we have
 		var found = false;
 		for (i in this.scanners) {
 		    var s = this.scanners[i];
@@ -181,16 +197,24 @@ function Markdown(input){
 		    }
 		}
 		if (!found) {
+		    // nothing matched; check first for blank line
 		    if (scanBlankline.test(remainder)) {
 			var nxt = applyScanners(this.blockScanners, this.nextLine);
 			if (nxt != null && scanBlankline.test(nxt) && this.blockScanners.length > 0) {
+			    // two blank lines break out of a block container
+			    // such as a list item.  we know we're in a block
+			    // container if blockScanners.length > 0.
 			    more = this.advance();
 			    break;
 			} else {
+			    // paragraph break.  pop paragraph lines and
+			    // move on.
 			    this.popTextLines(blocks);
 			    more = this.advance();
 			}
 		    } else {
+			// if non-blank, just parse it as a text line
+			// and move on.
 			continuation = this.parseTextLine(remainder);
 			more = this.advance();
 		    }
@@ -201,6 +225,7 @@ function Markdown(input){
 	return blocks;
     }
 
+    // add a non-blank line to the buffer of paragraph lines.
     markdown.parseTextLine = function(str) {
 	var remainder = applyScanners(this.lineScanners, str);
 	if (remainder == null || scanBlankline.test(remainder)) {
@@ -217,6 +242,8 @@ function Markdown(input){
 	};
     }
 
+    // get lines while scanners match, removing matched portions.
+    // return an array of lines.
     markdown.getLines = function(scanners) {
 	var lns = [];
 	more = this.advance()
