@@ -182,11 +182,11 @@ function Markdown(input){
 	};
     }
 
-    markdown.getLines = function(ln) {
-	var lns = [ln];
+    markdown.getLines = function(scanners) {
+	var lns = [];
 	more = this.advance()
 	while (more) {
-	    var res = applyScanners(this.lineScanners, this.thisLine);
+	    var res = applyScanners(scanners, this.thisLine);
 	    if (res) {
 		lns.push(res);
 		more = this.advance();
@@ -207,10 +207,11 @@ function Markdown(input){
     }
 
     var pIndentedCodeBlock = function(m,_,t) {
-	m.lineScanners.push(scanIndentSpaceOrBlankline);
-	var res = m.getLines(t).join('\n').replace(/\n*$/,'\n');
-	m.lineScanners.pop();
-	return { t: 'CodeBlock', attr: { codeLang: '' }, v: res }
+	m.blockScanners.push(scanIndentSpaceOrBlankline);
+	var rest = m.getLines(m.blockScanners);
+   	var code = (t + "\n" + rest.join('\n')).replace(/\n*$/,'\n');
+	m.blockScanners.pop();
+	return { t: 'CodeBlock', attr: { codeLang: '' }, v: code }
     }
 
     markdown.scanners = [
