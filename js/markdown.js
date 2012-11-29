@@ -35,6 +35,7 @@ scanBlankline = new RegExp('^ *$');
 scanSpace = new RegExp('^ ');
 scanSpaces = new RegExp('^ *');
 scanHrule = new RegExp('^ {0,3}(([*] *){3,}|(- *){3,}|(_ *){3,}) *$');
+scanWhitespace = new RegExp('^[ \n\t]+$');
 
 function applyScanners(scanners, str) {
     var i;
@@ -107,15 +108,48 @@ function Markdown(input){
         if (this.textLines.length > 0) {
             var res = this.textLines.join('\n');
             this.textLines = [];
-     	    blocks.push({ t:'Para',
-			  v: [{t: 'Markdown',v: res}]
-			});
+     	    blocks.push({ t:'Para', raw: res});
         };
     }
 
     // for now, just print ast
     markdown.showAST = function() {
-	return(util.inspect(this.parseBlocks(),false,null));
+	var blocks = this.parseBlocks();
+	this.processBlocks(blocks);
+	return(util.inspect(blocks,false,null));
+    }
+
+    // Modifies blocks in place.
+    markdown.processBlocks = function(blocks) {
+	for (i in blocks) {
+	    var block = blocks[i];
+	    switch (block.t) {
+	    case 'Para':
+		if (block.raw) {
+		    block.v = this.parseInlines(block.raw);
+		    delete block.raw;
+		}
+		break;
+	    case 'Blockquote':
+		this.processBlocks(block.v);
+		break;
+	    default:
+	    }
+	}
+    }
+
+    markdown.parseInlines = function(str) {
+	// for testing purposes
+	var inlines = [];
+	var words = str.split(/\b/);
+	for (i in words) {
+	    if (scanWhitespace.test(words[i])) {
+		inlines.push({t:'Space'});
+	    } else {
+		inlines.push({t:'Str',v:words[i]});
+	    }
+	}
+	return inlines;
     }
 
     markdown.parseBlocks = function() {
