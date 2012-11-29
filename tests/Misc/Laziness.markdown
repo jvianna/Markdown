@@ -1,3 +1,6 @@
+> 1.  one
+> two
+
 Laziness only affects paragraph continuations:
 
 >     code
@@ -5,3 +8,7 @@ Laziness only affects paragraph continuations:
 
 1.    hello
 -----
+
+> ```
+code
+```
