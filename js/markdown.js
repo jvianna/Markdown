@@ -64,8 +64,8 @@ function Markdown(input){
     markdown.textLines = [];
 
     var firsttwo = input.split(/\n/,2);
-    markdown.thisLine = firsttwo[0] || "";
-    markdown.nextLine = firsttwo[1] || "";
+    markdown.thisLine = detab_line(firsttwo[0] || "");
+    markdown.nextLine = detab_line(firsttwo[1] || "");
 
     markdown.advance = function() {
 	if (this.inputRemaining) {
@@ -76,7 +76,7 @@ function Markdown(input){
 		this.inputRemaining = "";
             } else {
 		this.inputRemaining = this.inputRemaining.slice(i + 1);
-		this.nextLine = this.inputRemaining.split(/\n/,2)[1] || "";
+		this.nextLine = detab_line(this.inputRemaining.split(/\n/,2)[1] || "");
             }
 	    return true;
 	} else {
@@ -134,11 +134,10 @@ function Markdown(input){
 		var found = false;
 		for (i in this.scanners) {
 		    var s = this.scanners[i];
-		    if (s.scanner.test(remainder)) {
+		    if (!found && s.scanner.test(remainder)) {
 			this.popTextLines(blocks);
 			blocks.push(s.parser(this,remainder));
 			found = true;
-			break;
 		    }
 		}
 		if (!found) {
