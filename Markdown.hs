@@ -718,14 +718,14 @@ parseTextLine thisLine = do
                      parseLines True Nothing  -- continue parsing
           Nothing -> popTextLines  -- return paragraph
 
-getLines :: BlockParser [Text]
-getLines = do
+getLines :: (ParserState -> [Scanner]) -> BlockParser [Text]
+getLines scannerType = do
   advance
-  line_scanners <- gets lineScanners
+  scanners <- gets scannerType
   mbpeek <- peekTwoLines
   case mbpeek of
-       Just (l,_) -> case applyScanners line_scanners l of
-                     Just l' -> (l':) <$> getLines
+       Just (l,_) -> case applyScanners scanners l of
+                     Just l' -> (l':) <$> getLines scannerType
                      Nothing -> return []
        Nothing -> return []
 
@@ -744,7 +744,7 @@ blockquoteParser _ _ = singleton . Blockquote <$>
 -- Parse an indented code block.
 indentedCodeBlockParser :: Text -> Text -> BlockParser Blocks
 indentedCodeBlockParser _ ln = do
-  lns <- withLineScanner (scanIndentSpace <|> scanBlankline) $ getLines
+  lns <- withBlockScanner (scanIndentSpace <|> scanBlankline) $ getLines blockScanners
   return $ singleton . CodeBlock CodeAttr{ codeLang = Nothing } .  T.unlines
      . reverse . dropWhile T.null . reverse $ (ln:lns)
 
@@ -755,7 +755,7 @@ codeFenceParser ln _ = do
   case parseOnly codeFenceParserLine ln of
        Left _  -> error "Could not parse codeFenceParserLine" -- should not happen
        Right (fence, rawattr) -> do
-         lns <- withLineScanner (nfb $ string fence) $ getLines
+         lns <- withBlockScanner (nfb $ string fence) $ getLines blockScanners
          advance -- consume the fence at the end
          return $ singleton . CodeBlock (parseCodeAttributes rawattr) . T.unlines $ lns
 
@@ -796,7 +796,8 @@ hruleParser _ _ = (singleton HRule) <$ advance
 -- and update the reference map in state.
 referenceParser :: Text -> Text -> BlockParser Blocks
 referenceParser first _ = do
-  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference) getLines
+  rest <- withLineScanner (nfb scanBlankline >> nfb scanReference)
+          $ getLines lineScanners
   let raw = joinLines (first:rest)
   case parseOnly pReference raw of
        Left  _               -> return $ singleton $ Para
@@ -1009,7 +1010,7 @@ blockHtmlTags = Set.fromList
 -- Markdown.pl didn't have a way of handling balanced tags.
 htmlBlockParser :: Text -> Text -> BlockParser Blocks
 htmlBlockParser ln _ = do
-  lns <- withLineScanner (nfb scanBlankline) getLines
+  lns <- withLineScanner (nfb scanBlankline) $ getLines lineScanners
   return $ singleton $ HtmlBlock $ joinLines $ map T.stripEnd (ln:lns)
 
 -- Parse a text into inlines, resolving reference links
