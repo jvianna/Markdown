@@ -126,7 +126,7 @@ function Markdown(input){
 	    if (remainder == null) {
 		if (continuation) {
 		    continuation = this.parseTextLine(this.thisLine);
-		    more = this.advance();
+		    more = continuation && this.advance();
 		} else {
 		    break;
 		}
