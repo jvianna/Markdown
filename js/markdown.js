@@ -28,6 +28,7 @@ assert.equal(normalizeLabel("По\n оживлённым берегам"), norma
 
 scanNonidentSpaces = new RegExp('^ {0,3}');
 scanIndentSpace = new RegExp('^    ');
+scanIndentSpaceOrBlankline = new RegExp('^    |^ *$');
 scanBlockquoteStart = new RegExp('^ {0,3}> ?');
 optScanBlockquoteStart = new RegExp('^( {0,3}> ?)?');
 scanBlankline = new RegExp('^ *$');
@@ -135,9 +136,12 @@ function Markdown(input){
 		var found = false;
 		for (i in this.scanners) {
 		    var s = this.scanners[i];
-		    if (!found && s.scanner.test(remainder)) {
+		    var matched;
+		    if (!found && (matched = s.scanner.exec(remainder))) {
 			this.popTextLines(blocks);
-			blocks.push(s.parser(this,remainder));
+			blocks.push(s.parser(this,
+					     remainder,
+					     remainder.slice(matched[0].length)));
 			found = true;
 		    }
 		}
@@ -193,7 +197,7 @@ function Markdown(input){
 	return lns;
     }
 
-    pBlockquote = function(m) {
+    var pBlockquote = function(m) {
 	m.blockScanners.push(scanBlockquoteStart);
 	m.lineScanners.push(optScanBlockquoteStart);
 	var res = m.parseBlocks();
@@ -202,9 +206,18 @@ function Markdown(input){
 	return { t: 'Blockquote', v: res };
     }
 
+    var pIndentedCodeBlock = function(m,_,t) {
+	m.lineScanners.push(scanIndentSpaceOrBlankline);
+	var res = m.getLines(t).join('\n').replace(/\n*$/,'\n');
+	m.lineScanners.pop();
+	return { t: 'CodeBlock', attr: { codeLang: '' }, v: res }
+    }
+
     markdown.scanners = [
 	{ scanner: scanBlockquoteStart,
-	  parser:  pBlockquote }
+	  parser:  pBlockquote },
+	{ scanner: scanIndentSpace,
+	  parser:  pIndentedCodeBlock },
     ];
 
     return markdown;
