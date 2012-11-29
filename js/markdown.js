@@ -24,135 +24,6 @@ function normalizeLabel(str) {
 
 assert.equal(normalizeLabel("По\n оживлённым берегам"), normalizeLabel("ПО ОЖИВЛЁННЫМ БЕРЕГАМ"));
 
-function Markdown(input){
-
-    var markdown = new Object();
-
-    markdown.inputRemaining = input; // input string
-    markdown.blockScanners = [];
-    markdown.lineScanners = [];
-    markdown.linkReferences = {};
-    markdown.textLines = [];
-
-    markdown.peekLines = function() {
-        return this.inputRemaining.split(/\n/,2);
-    }
-
-    markdown.advance = function() {
-        var i = this.inputRemaining.indexOf('\n');
-        if (i == -1) {
-            return false;
-        } else {
-            this.inputRemaining = this.inputRemaining.slice(i + 1);
-            return true;
-        };
-    }
-
-    markdown.addLinkReference = function(label, url, title) {
-	this.linkReferences[normalizeLabel(label)] =
-            { url: url,
-              title: title
-            };
-	return true;
-    }
-
-    markdown.lookupLinkReference = function(label) {
-	return this.linkReferences[normalizeLabel(label)];
-    }
-
-    markdown.addTextLine = function(str) {
-        this.textLines.push(str);
-        return true;
-    }
-
-    markdown.popTextLines = function() {
-        if (textLines.length == 0) {
-            return null;
-        } else {
-            var res = textLines.join('\n');
-            textLines = [];
-     	    return { t:'Para',
-                     v: [{t: 'Markdown',v: res}]
-                   };
-        };
-    }
-
-    // for now, just print ast
-    markdown.toHtml = function(x) {
-	return(util.inspect(x,false,null));
-    }
-
-    return markdown;
-}
-
-
-
-function parserState(str) {
-    var inputRemaining = str;
-    var blockScanners = [];
-    var lineScanners = [];
-    var linkReferences = {};
-    var textLines = [];
-    return { peekLines : function() {
-                 return inputRemaining.split(/\n/,2);
-             },
-             advance : function() {
-                 var i = inputRemaining.indexOf('\n');
-                 if (i == -1) {
-                     return false;
-                 } else {
-                     inputRemaining = inputRemaining.slice(i + 1);
-                     return true;
-                 };
-             },
-	     blockScanners : function() {
-		 return blockScanners;
-	     },
-	     lineScanners : function() {
-		 return lineScanners;
-	     },
-	     pushBlockScanner : function(scanner) {
-		 blockScanners.push(scanner);
-		 return true;
-	     },
-	     pushLineScanner : function(scanner) {
-		 lineScanners.push(scanner);
-		 return true;
-	     },
-	     popBlockScanner : function(scanner) {
-		 return blockScanners.pop();
-             },
-	     popLineScanner : function(scanner) {
-		 return lineScanners.pop();
-	     },
-	     addLinkReference : function(label, url, title) {
-		 linkReferences[normalizeLabel(label)] =
-                   { url: url,
-                     title: title
-                   };
-		 return true;
-	     },
-	     lookupLinkReference : function(label) {
-		 return linkReferences[normalizeLabel(label)];
-             },
-             addTextLine : function(str) {
-                 textLines.push(str);
-                 return true;
-             },
-             popTextLines : function() {
-                 if (textLines.length == 0) {
-                   return null;
-                 } else {
-                   var res = textLines.join('\n');
-                   textLines = [];
-     	  	   return { t:'Para',
-                            v: [{t: 'Markdown',v: res}]
-                          };
-                 };
-	     }
-    }
-}
-
 // scanners
 
 scanNonidentSpaces = new RegExp('^ {0,3}');
@@ -162,8 +33,6 @@ optScanBlockquoteStart = new RegExp('^( {0,3}> ?)?');
 scanBlankline = new RegExp('^ *$');
 scanSpace = new RegExp('^ ');
 scanSpaces = new RegExp('^ *');
-
-reEmpty = new RegExp('^[ \n\t\r]*$');
 
 function applyScanners(scanners, str) {
     var i;
@@ -183,108 +52,170 @@ assert.equal(applyScanners([],"hi"),"hi");
 assert.equal(applyScanners([scanBlockquoteStart],"> hi"), "hi");
 assert.equal(applyScanners([scanBlockquoteStart,scanBlockquoteStart]," >> hi"), "hi");
 
-function parseLines(state, continuation, line){
-    var xs = [];
-    var more = true;
-    var continuation = false;
-    var last;
-    while (more) {
-	var bscanners = state.blockScanners();
-	var lns = state.peekLines();
-	var thisLine = lns[0];
-	var nextLine = lns[1] || "";
-	var remainder = applyScanners(bscanners, thisLine);
-	if (remainder == null) {
-	    if (continuation) {
-              continuation = parseTextLine(state, thisLine);
-            };
-            break;
+
+function Markdown(input){
+
+    var markdown = new Object();
+
+    markdown.inputRemaining = input; // input string
+    markdown.blockScanners = [];
+    markdown.lineScanners = [];
+    markdown.linkReferences = {};
+    markdown.textLines = [];
+
+    var firsttwo = input.split(/\n/,2);
+    markdown.thisLine = firsttwo[0] || "";
+    markdown.nextLine = firsttwo[1] || "";
+
+    markdown.advance = function() {
+	if (this.inputRemaining) {
+	    this.thisLine = this.nextLine;
+            var i = this.inputRemaining.indexOf('\n');
+            if (i == -1) {
+		this.nextLine = "";
+		this.inputRemaining = "";
+            } else {
+		this.inputRemaining = this.inputRemaining.slice(i + 1);
+		this.nextLine = this.inputRemaining.split(/\n/,2)[1] || "";
+            }
+	    return true;
 	} else {
-            // here is where we check for new blocks
-            for (i in scanners) {
-              var s = scanners[i];
-              if (s.scanner.test(remainder)) {
-                last = state.popTextLines();
-                if (last) { xs.push(last); }
-                xs.push(s.parser(state, remainder));
-              } else if (parseTextLine(state, remainder)) {
-                continuation = true;
-                break;
-              } else {
-                last = state.popTextLines();
-                if (last) { xs.push(last); }
-              };
+	    return false;
+	}
+    }
+
+    markdown.addLinkReference = function(label, url, title) {
+	this.linkReferences[normalizeLabel(label)] =
+            { url: url,
+              title: title
             };
+	return true;
+    }
+
+    markdown.lookupLinkReference = function(label) {
+	return this.linkReferences[normalizeLabel(label)];
+    }
+
+    markdown.addTextLine = function(str) {
+        this.textLines.push(str);
+        return true;
+    }
+
+    markdown.popTextLines = function(blocks) {
+        if (this.textLines.length > 0) {
+            var res = this.textLines.join('\n');
+            this.textLines = [];
+     	    blocks.push({ t:'Para',
+			  v: [{t: 'Markdown',v: res}]
+			});
+        };
+    }
+
+    // for now, just print ast
+    markdown.showAST = function() {
+	return(util.inspect(this.parseBlocks(),false,null));
+    }
+
+    markdown.parseBlocks = function() {
+	var blocks = [];
+	var more = true;
+	var last;
+	var continuation = false;
+	while (more) {
+	    var remainder = applyScanners(this.blockScanners, this.thisLine);
+	    if (remainder == null) {
+		if (continuation) {
+		    continuation = this.parseTextLine(this.thisLine);
+		} else {
+		    break;
+		}
+	    } else {
+		// here is where we check for new blocks
+		var found = false;
+		for (i in this.scanners) {
+		    var s = this.scanners[i];
+		    if (s.scanner.test(remainder)) {
+			this.popTextLines(blocks);
+			blocks.push(s.parser(this,remainder));
+			found = true;
+			break;
+		    }
+		}
+		if (!found) {
+		    if (scanBlankline.test(remainder)) {
+			var nxt = applyScanners(this.blockScanners, this.nextLine);
+			if (nxt != null && scanBlankline.test(nxt) && this.blockScanners.length > 0) {
+			    break;
+			} else {
+			    this.popTextLines(blocks);
+			}
+		    } else {
+			continuation = this.parseTextLine(remainder);
+		    }
+		}
+	    };
+	    more = this.advance();
+	}
+	this.popTextLines(blocks);
+	return blocks;
+    }
+
+    markdown.parseTextLine = function(str) {
+	var remainder = applyScanners(this.lineScanners, str);
+	if (remainder == null || scanBlankline.test(remainder)) {
+	    return false;
+	} else {
+	    for (i in this.scanners) {
+		var s = this.scanners[i];
+		if (s.scanner.test(remainder)) {
+		    return false;
+		};
+	    }
+	    this.addTextLine(remainder);
+	    return true;
 	};
-	more = state.advance();
     }
-    last = state.popTextLines();
-    if (last){ xs.push(last); };
-    return xs;
-};
 
-function getLines(state, ln) {
-  state.advance()
-  var lscanners = state.lineScanners()
-  var lns = [ln];
-  var more = state.peekLines();
-  while (more.length > 0) {
-    var res = applyScanners(lscanners, more[0]);
-    if (res) {
-      lns.push(res);
-      state.advance();
-      more = state.peekLines();
-    } else {
-      break;
+    markdown.getLines = function(ln) {
+	var lns = [ln];
+	more = this.advance()
+	while (more) {
+	    var res = applyScanners(this.lineScanners, this.thisLine);
+	    if (res) {
+		lns.push(res);
+		more = this.advance();
+	    } else {
+		break;
+	    }
+	}
+	return lns;
     }
-  }
-  return lns;
+
+    pBlockquote = function(m) {
+	m.blockScanners.push(scanBlockquoteStart);
+	m.lineScanners.push(optScanBlockquoteStart);
+	var res = m.parseBlocks();
+	m.lineScanners.pop();
+	m.blockScanners.pop();
+	return { t: 'Blockquote', v: res };
+    }
+
+    markdown.scanners = [
+	{ scanner: scanBlockquoteStart,
+	  parser:  pBlockquote }
+    ];
+
+    return markdown;
 }
 
-var scanners = [
-  { scanner: scanBlockquoteStart,
-    parser:  pBlockquote }
-];
 
-function pBlockquote(state) {
-  state.pushBlockScanner(scanBlockquoteStart);
-  state.pushLineScanner(optScanBlockquoteStart);
-  var res = parseLines(state);
-  state.popLineScanner();
-  state.popBlockScanner();
-  return { t: 'Blockquote', v: res };
-};
 
-function parseTextLine(state, str) {
-  var lscanners = state.lineScanners();
-  var remainder = applyScanners(lscanners, str);
-  if (remainder == null || scanBlankline.test(remainder)) {
-    return false;
-  } else {
-    for (i in scanners) {
-      var s = scanners[i];
-      if (s.scanner.test(remainder)) {
-        return false;
-      };
-    }
-    state.addTextLine(remainder);
-    return true;
-  };
-}
-
-function parseMarkdown(inputString) {
-    var state = parserState(inputString);
-    // state.pushBlockScanner(scanBlockquoteStart);
-    return parseLines(state, false);
-}
 
 // main program
 
 
-// var inputFile = process.argv[2] || '/dev/stdin';
-
-// var contents = fs.readFileSync(inputFile,'utf8');
-
-// console.log(toHtml(parseMarkdown(contents)));
-
+var inputFile = process.argv[2] || '/dev/stdin';
+var contents = fs.readFileSync(inputFile,'utf8');
+var markdown = new Markdown(contents);
+console.log(markdown.showAST());
 
