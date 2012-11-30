@@ -893,8 +893,7 @@ listParser first first' = do
   -- scancontentsindent.
   let blockScanner = scanContentsIndent <|> scanBlankline
   -- but a line within a block can omit that initial indent.
-  let lineScanner = opt (scanContentsIndent) >>
-                    nfb (scanSpaces >> scanListStart Nothing)
+  let lineScanner = opt scanContentsIndent
   firstItem <- withBlockScanner blockScanner
                $ withLineScanner lineScanner
                $ parseLines False $ Just first'
