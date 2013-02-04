@@ -26,3 +26,10 @@ pairs = [(x,y) | x <- [0..10], y <- ['a'..'z']]
 backticks :: String
 backticks = "`````"
 `````````````
+
+Without an end:
+
+```
+code with
+no end
+

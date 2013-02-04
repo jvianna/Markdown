@@ -8,5 +8,3 @@
 1. four
 1) five
 1) five
-(1) six
-(1) six
