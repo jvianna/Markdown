@@ -20,7 +20,3 @@ here -->
 *commented out markdown*
 
 -->
-
-<div>
-* raw html with trailing space 
-</div>

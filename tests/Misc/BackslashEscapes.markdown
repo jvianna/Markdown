@@ -7,7 +7,7 @@
 [link](/foo\) "title\"")
 \`not code`
 
-1\. not a list item
+\1. not a list item
 
 \* not a list.
 
@@ -17,4 +17,5 @@
 
 \$ \^ \; can be escaped.
 \a \b \T cannot.
-unicode letters and symbols cannot: \π \‥.
+unicode symbols can: \‥.
+unicode letters cannot: \π.

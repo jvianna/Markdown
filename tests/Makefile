@@ -3,7 +3,6 @@ TESTS=$(wildcard $(TESTDIR)/*.markdown)
 DIFFS=$(patsubst %.markdown,%.diff,$(TESTS))
 PROG ?= ../bin/markdown
 TIDYCMD ?= tidy -asxhtml -utf8 --show-body-only yes --show-warnings no -quiet
-DETAILS ?= 1
 
 # Check to see if echo supports -e option to allow backslash escapes
 ifeq ($(shell echo -e),-e)
@@ -39,9 +38,7 @@ endif
 	diff --unified=1 $+ > $@ ; \
 	  if [ -s $@ ]; then \
 		$(ECHO)  "\033[1;31m✘ $(patsubst %.diff,%,$@)\033[0m"; \
-		if [ $(DETAILS) == "1" ]; then \
-			$(ECHO)  "\033[0;36m" ; cat $@; $(ECHO)  "\033[0m"; \
-		fi \
+		$(ECHO)  "\033[0;36m" ; cat $@; $(ECHO)  "\033[0m"; \
 	  else \
 		$(ECHO)  "\033[1;32m✓ $(patsubst %.diff,%,$@)\033[0m"; \
 	  fi
@@ -49,4 +46,4 @@ endif
 .PHONY: all clean
 
 clean:
-	-@rm */*.{diff,actual.html,expected.html}
+	-@rm $(DIFFS)
